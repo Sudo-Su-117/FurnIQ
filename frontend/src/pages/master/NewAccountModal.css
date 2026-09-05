@@ -1,0 +1,176 @@
+/* ===== New / Edit Account Modal ===== */
+.nam-overlay {
+  position: fixed; inset: 0;
+  background: rgba(44,36,22,0.52); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; animation: nam-fadein 0.18s ease;
+}
+@keyframes nam-fadein { from { opacity: 0; } to { opacity: 1; } }
+
+.nam-panel {
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  width: 100%; max-width: 560px;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: nam-slidein 0.22s ease;
+}
+@keyframes nam-slidein {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* ─── Top bar ─── */
+.nam-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 18px 11px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-cream);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0; gap: 10px;
+}
+.nam-topbar-left  { display: flex; gap: 7px; flex-wrap: wrap; }
+.nam-topbar-right { display: flex; align-items: center; gap: 8px; }
+
+.nam-btn {
+  padding: 6px 16px; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; font-family: var(--font-body);
+  cursor: pointer; letter-spacing: 0.02em;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.nam-btn--new {
+  background: var(--primary); color: #fff; border: 1.5px solid var(--primary);
+}
+.nam-btn--new:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+
+.nam-btn--confirm {
+  background: transparent; color: var(--primary); border: 1.5px solid var(--primary);
+}
+.nam-btn--confirm:hover       { background: rgba(166,124,61,0.08); }
+.nam-btn--confirmed           { background: #EAF7EF; color: #1E7D3E; border-color: #A8DDB8; }
+
+.nam-btn--archived {
+  background: transparent; color: var(--text-medium); border: 1.5px solid var(--border-color);
+}
+.nam-btn--archived:hover       { border-color: var(--text-medium); }
+.nam-btn--archived-active      { background: #F5F5F5; color: var(--text-dark); border-color: var(--text-medium); }
+
+.nam-btn--back {
+  background: transparent; color: var(--text-medium); border: 1.5px solid var(--border-color);
+}
+.nam-btn--back:hover { border-color: var(--primary); color: var(--primary); }
+
+.nam-close {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: 50%;
+  color: var(--text-light); cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.nam-close:hover { background: rgba(44,36,22,0.08); color: var(--text-dark); }
+
+/* ─── Title ─── */
+.nam-title {
+  font-family: var(--font-heading); font-size: 20px; font-weight: 700;
+  color: var(--text-dark); padding: 20px 24px 4px;
+}
+
+/* ─── Body ─── */
+.nam-body {
+  padding: 8px 24px 4px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+/* Field row: label left, input right */
+.nam-field { display: flex; align-items: flex-start; gap: 14px; }
+.nam-lbl {
+  width: 120px; flex-shrink: 0;
+  font-size: 13px; font-weight: 600; color: var(--text-medium);
+  padding-top: 10px; text-align: right;
+}
+.nam-lbl--top { padding-top: 4px; }
+.nam-input-wrap { flex: 1; min-width: 0; }
+
+/* Underline input */
+.nam-input {
+  display: block; width: 100%;
+  background: transparent; border: none;
+  border-bottom: 1.5px solid var(--border-color);
+  border-radius: 0; padding: 8px 2px;
+  font-size: 14px; font-family: var(--font-body);
+  color: var(--text-dark); outline: none;
+  transition: border-color 0.18s;
+}
+.nam-input::placeholder { color: var(--text-placeholder); }
+.nam-input:focus        { border-bottom-color: var(--primary); }
+.nam-input--err         { border-bottom-color: var(--error); }
+.nam-err { display: block; font-size: 11px; color: var(--error); margin-top: 3px; }
+
+/* ─── Type panel ─── */
+.nam-field--type { align-items: flex-start; }
+.nam-type-panel {
+  flex: 1; border: 1px solid var(--border-color);
+  border-radius: var(--radius-md); padding: 14px 16px;
+  background: #FDFCFA;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.nam-type-group { display: flex; flex-direction: column; gap: 8px; }
+
+/* Heading row (Balance Sheet / P&L) */
+.nam-type-heading {
+  font-size: 11px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--primary);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(166,124,61,0.2);
+}
+
+/* Type option buttons */
+.nam-type-options {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.nam-type-opt {
+  padding: 5px 14px; border-radius: 20px;
+  font-size: 12.5px; font-weight: 500; font-family: var(--font-body);
+  background: var(--bg-cream); color: var(--text-medium);
+  border: 1.5px solid var(--border-color); cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.nam-type-opt:hover { border-color: var(--primary); color: var(--primary); }
+.nam-type-opt--active {
+  background: var(--primary); color: #fff; border-color: var(--primary);
+  font-weight: 700;
+}
+
+/* Selected summary */
+.nam-type-selected {
+  font-size: 12px; color: var(--text-medium);
+  padding-top: 4px; border-top: 1px solid var(--border-color);
+}
+.nam-type-selected strong { color: var(--primary); }
+.nam-type-group-tag {
+  background: var(--bg-cream); padding: 1px 8px;
+  border-radius: 10px; font-size: 11px; margin-left: 4px;
+  color: var(--text-light);
+}
+
+/* ─── Footer ─── */
+.nam-footer {
+  display: flex; gap: 10px;
+  padding: 16px 24px 22px;
+  border-top: 1px solid var(--border-color); margin-top: 8px;
+}
+.nam-save-btn {
+  flex: 1; padding: 10px;
+  background: var(--primary); color: #fff; border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 600; font-family: var(--font-body);
+  cursor: pointer; transition: background 0.2s;
+}
+.nam-save-btn:hover { background: var(--primary-dark); }
+.nam-cancel-btn {
+  flex: 1; padding: 10px;
+  background: transparent; color: var(--text-medium);
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 600; font-family: var(--font-body);
+  cursor: pointer; transition: border-color 0.15s, color 0.15s;
+}
+.nam-cancel-btn:hover { border-color: var(--primary); color: var(--primary); }

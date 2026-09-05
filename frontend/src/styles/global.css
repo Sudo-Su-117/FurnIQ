@@ -1,0 +1,91 @@
+/* ============================================
+   FurnIQ Global Styles
+   Color Palette extracted from design:
+   - Background: #F0EBE0 (warm cream/beige)
+   - Primary: #A67C3D (golden brown)
+   - Primary Dark: #8B6429 (darker gold)
+   - Primary Light: #C49A2A (lighter gold)
+   - Card BG: #FFFFFF
+   - Text Dark: #2C2416
+   - Text Medium: #5C4A2A
+   - Text Light: #9E8A6E
+   - Border: #D4C4A0
+   - Error: #C0392B
+   ============================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-cream: #F0EBE0;
+  --bg-cream-dark: #E8E0D0;
+  --primary: #A67C3D;
+  --primary-dark: #8B6429;
+  --primary-light: #C49A2A;
+  --primary-hover: #7A5520;
+  --card-bg: #FFFFFF;
+  --text-dark: #2C2416;
+  --text-medium: #5C4A2A;
+  --text-light: #9E8A6E;
+  --text-placeholder: #B0A090;
+  --border-color: #D4C4A0;
+  --border-focus: #A67C3D;
+  --error: #C0392B;
+  --error-bg: #FDECEA;
+  --success: #27AE60;
+  --shadow-sm: 0 1px 3px rgba(44, 36, 22, 0.08);
+  --shadow-md: 0 4px 16px rgba(44, 36, 22, 0.12);
+  --shadow-lg: 0 8px 32px rgba(44, 36, 22, 0.16);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-heading: 'DM Serif Display', Georgia, serif;
+  --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  background-color: var(--bg-cream);
+  color: var(--text-dark);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+input {
+  font-family: var(--font-body);
+}
+
+/* Shared utility */
+.success-banner {
+  background: #EAF7EF;
+  border: 1px solid #A8DDB8;
+  border-radius: var(--radius-sm);
+  color: #1E7D3E;
+  font-size: 13px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+}

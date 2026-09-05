@@ -1,0 +1,182 @@
+/* ===== Sign Up Page ===== */
+.signup-page {
+  min-height: 100vh;
+  background-color: var(--bg-cream);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+/* Shared brand header */
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 28px;
+  gap: 4px;
+}
+.auth-logo {
+  width: 56px;
+  height: 56px;
+  background-color: var(--primary);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 8px rgba(166,124,61,0.3);
+}
+.auth-logo span {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+}
+.auth-brand-name {
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text-dark);
+  letter-spacing: 0.02em;
+}
+.auth-brand-subtitle {
+  font-size: 13px;
+  color: var(--text-light);
+  letter-spacing: 0.03em;
+}
+
+/* Card */
+.signup-card {
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 36px 40px 28px;
+  width: 100%;
+  max-width: 460px;
+  border: 1px solid rgba(212,196,160,0.5);
+}
+
+.card-title {
+  font-family: var(--font-heading);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin-bottom: 4px;
+}
+.card-subtitle {
+  font-size: 13px;
+  color: var(--text-light);
+  margin-bottom: 24px;
+}
+
+/* Reuse shared form styles from global / login */
+.error-banner {
+  background: #FDECEA;
+  border: 1px solid #F5C6C2;
+  border-radius: var(--radius-sm);
+  color: var(--error);
+  font-size: 13px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+}
+.form-group { margin-bottom: 18px; }
+.form-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-medium);
+  margin-bottom: 6px;
+}
+.form-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--text-dark);
+  background: #FDFCFA;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.form-input::placeholder { color: var(--text-placeholder); }
+.form-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(166,124,61,0.13);
+  background: #fff;
+}
+.form-input--error { border-color: var(--error); }
+.form-input--error:focus { box-shadow: 0 0 0 3px rgba(192,57,43,0.1); }
+
+.input-wrap { position: relative; display: flex; align-items: center; }
+.input-wrap .form-input { padding-right: 42px; }
+.eye-btn {
+  position: absolute; right: 12px;
+  background: none; border: none; padding: 4px;
+  color: var(--text-light); display: flex;
+  align-items: center; cursor: pointer;
+  transition: color 0.2s;
+}
+.eye-btn:hover { color: var(--primary); }
+.field-error { display: block; font-size: 12px; color: var(--error); margin-top: 4px; }
+
+/* Password strength hints */
+.pass-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+.strength-dot {
+  font-size: 11px;
+  color: var(--text-light);
+  transition: color 0.2s;
+}
+.strength-dot--ok { color: var(--success, #27AE60); font-weight: 500; }
+
+/* Button */
+.btn-primary {
+  width: 100%;
+  height: 46px;
+  background-color: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+  margin-bottom: 20px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color 0.2s, transform 0.1s;
+}
+.btn-primary:hover:not(:disabled) { background-color: var(--primary-dark); }
+.btn-primary:active:not(:disabled) { transform: translateY(1px); }
+.btn-primary:disabled { opacity: 0.7; cursor: not-allowed; }
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Footer links */
+.footer-links {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; font-size: 13px;
+}
+.divider { color: var(--border-color); }
+.footer-links a { color: var(--primary); font-weight: 500; }
+.footer-links a:hover { color: var(--primary-dark); text-decoration: underline; }
+
+@media (max-width: 480px) {
+  .signup-card { padding: 28px 20px 22px; }
+  .auth-brand-name { font-size: 22px; }
+}
