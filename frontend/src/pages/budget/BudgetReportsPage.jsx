@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import './BudgetReportsPage.css'
+import Pagination, { usePagination } from '../../components/Pagination'
 
 /* ── Mock budget report records ── */
 const INITIAL_REPORTS = [
@@ -374,6 +375,8 @@ export default function BudgetReportsPage() {
       r.endDate.includes(q)
   })
 
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
+
   const openAdd  = ()  => { setEditReport(null); setModalOpen(true) }
   const openEdit = (r) => { setEditReport(r);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditReport(null) }
@@ -444,7 +447,7 @@ export default function BudgetReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((r, i) => (
+                    {paged.map((r, i) => (
                       <tr key={r.id} className={`br-tr${i % 2 === 1 ? ' br-tr--alt' : ''}`}>
                         <td>
                           <button className="br-name-link" onClick={() => openEdit(r)}>{r.name}</button>
@@ -476,7 +479,7 @@ export default function BudgetReportsPage() {
               : (
                 /* Grid view */
                 <div className="br-grid">
-                  {filtered.map(r => {
+                  {paged.map(r => {
                     const total  = (r.achieved || 0) + (r.balance || 0)
                     const achPct = total > 0 ? Math.round((r.achieved / total) * 100) : 0
                     return (
@@ -541,9 +544,7 @@ export default function BudgetReportsPage() {
               )
           }
 
-          <div className="br-footer">
-            <span className="br-count">Showing {filtered.length} of {reports.length}</span>
-          </div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewContactModal from './NewContactModal'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './ContactsPage.css'
 
 const INITIAL_CONTACTS = [
@@ -50,6 +51,8 @@ export default function ContactsPage() {
     const matchType = typeFilter === 'All' || c.type === typeFilter.toUpperCase()
     return matchSearch && matchType
   })
+
+  const { page, setPage, paged: pagedContacts, total: totalFiltered } = usePagination(filtered, 10)
 
   const openAddModal  = () => { setEditContact(null); setModalOpen(true) }
   const openEditModal = (c)  => { setEditContact(c);  setModalOpen(true) }
@@ -134,7 +137,7 @@ export default function ContactsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(contact => (
+                  {pagedContacts.map(contact => (
                     <tr key={contact.id}>
                       <td>
                         <div className="cp-name-cell">
@@ -169,13 +172,7 @@ export default function ContactsPage() {
                 </tbody>
               </table>
             )}
-            <div className="cp-footer">
-              <span className="cp-count">Showing 1–{filtered.length} of {contacts.length}</span>
-              <div className="cp-pagination">
-                <button className="cp-page-btn cp-page-btn--active" aria-current="page">1</button>
-                <button className="cp-page-btn">2</button>
-              </div>
-            </div>
+            <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
           </div>
         )}
 

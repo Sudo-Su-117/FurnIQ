@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './DataForms.css'
 
 const PARTNERS = ['Timber World', 'Steel Hub', 'Fabric Co.', 'Godrej Interio Ltd.', 'Ratan Mehra', 'Priya Kapoor', 'Ananya Sharma']
@@ -46,6 +47,8 @@ export default function PaymentsPage() {
            (statusFlt === 'All' || p.status === statusFlt)
   })
 
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
+
   const openNew  = ()  => { setEditPay(null); setModalOpen(true) }
   const openEdit = (p) => { setEditPay(p);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditPay(null) }
@@ -81,7 +84,7 @@ export default function PaymentsPage() {
           <table className="df-table">
             <thead><tr><th>Payment No.</th><th>Partner</th><th>Type</th><th className="align-right">Amount</th><th>Account</th><th>Journal</th><th className="align-center">Status</th><th>Actions</th></tr></thead>
             <tbody>
-              {filtered.map(p => (
+              {paged.map(p => (
                 <tr key={p.id} className="df-tr">
                   <td><button className="df-link-btn" onClick={() => openEdit(p)}>{p.id}</button></td>
                   <td className="df-vendor">{p.partner}</td>
@@ -95,7 +98,7 @@ export default function PaymentsPage() {
               ))}
             </tbody>
           </table>
-          <div className="df-footer"><span className="df-count">Showing {filtered.length} of {payments.length}</span></div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
       <PaymentModal isOpen={modalOpen} onClose={close} onSave={handleSave} editPayment={editPay} />

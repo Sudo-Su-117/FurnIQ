@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewJournalModal from './NewJournalModal'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './JournalsPage.css'
 
 /* Pre-configured journals */
@@ -59,6 +60,8 @@ export default function JournalsPage() {
       j.defaultAccount.toLowerCase().includes(q)
   })
 
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
+
   const openAdd  = ()  => { setEditJournal(null); setModalOpen(true) }
   const openEdit = (j) => { setEditJournal(j);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false);  setEditJournal(null) }
@@ -116,7 +119,7 @@ export default function JournalsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((j, i) => (
+                  {paged.map((j, i) => (
                     <tr key={j.id} className={`jnl-tr jnl-tr--${j.type.toLowerCase()}`}>
                       {/* Name */}
                       <td>
@@ -153,9 +156,7 @@ export default function JournalsPage() {
             )
           }
 
-          <div className="jnl-footer">
-            <span className="jnl-count">Showing {filtered.length} of {journals.length}</span>
-          </div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
 

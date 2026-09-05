@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import JournalEntryModal from './JournalEntryModal'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './JournalEntriesPage.css'
 
 /* ── Mock data ── */
@@ -59,6 +60,8 @@ export default function JournalEntriesPage() {
     const matchStatus = statusFilter === 'All' || e.status === statusFilter
     return matchSearch && matchStatus
   })
+
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
 
   const openNew  = ()  => { setEditEntry(null); setModalOpen(true) }
   const openEdit = (e) => { setEditEntry(e);    setModalOpen(true) }
@@ -132,7 +135,7 @@ export default function JournalEntriesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(entry => (
+                  {paged.map(entry => (
                     <tr key={entry.id} className="je-tr">
                       <td className="je-date">{entry.date}</td>
                       <td>
@@ -165,12 +168,7 @@ export default function JournalEntriesPage() {
               </table>
             )
           }
-          <div className="je-footer">
-            <span className="je-count">Showing {filtered.length} of {entries.length}</span>
-            <div className="je-totals-row">
-              <span>Total Posted: {fmt(entries.filter(e=>e.status==='Posted').reduce((s,e)=>s+e.total,0))}</span>
-            </div>
-          </div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
 

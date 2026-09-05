@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import './AnalyticAccountsPage.css'
+import Pagination, { usePagination } from '../../components/Pagination'
 
 /* ── Analytic types from wireframe ── */
 const ANALYTIC_TYPES = ['Budget', 'Short Body', 'End Body', 'Committed', 'Achieved']
@@ -195,6 +196,8 @@ export default function AnalyticAccountsPage() {
 
   const totalAmount = accounts.reduce((s,a) => s + a.analyticAmount, 0)
 
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
+
   const openAdd  = ()  => { setEditAcc(null); setModalOpen(true) }
   const openEdit = (a) => { setEditAcc(a);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditAcc(null) }
@@ -270,7 +273,7 @@ export default function AnalyticAccountsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((a,i) => (
+                  {paged.map((a,i) => (
                     <tr key={a.id} className={`aa-tr${i%2===1?' aa-tr--alt':''}`}>
                       <td className="aa-id">{a.id}</td>
                       <td className="aa-name-text">{a.name}</td>
@@ -288,9 +291,7 @@ export default function AnalyticAccountsPage() {
               </table>
             )
           }
-          <div className="aa-footer">
-            <span className="aa-count">Showing {filtered.length} of {accounts.length}</span>
-          </div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
 

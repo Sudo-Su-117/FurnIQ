@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './DataForms.css'
 
 const CUSTOMERS = ['Ratan Mehra', 'Priya Kapoor', 'Ananya Sharma', 'Mahindra Living', 'Godrej Interio Ltd.']
@@ -42,6 +43,8 @@ export default function SalesOrdersPage() {
     return (!search || o.id.toLowerCase().includes(q) || o.customer.toLowerCase().includes(q)) &&
            (statusFlt === 'All' || o.status === statusFlt)
   })
+
+  const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
 
   const openNew  = ()  => { setEditOrder(null); setModalOpen(true) }
   const openEdit = (o) => { setEditOrder(o);    setModalOpen(true) }
@@ -91,7 +94,7 @@ export default function SalesOrdersPage() {
           <table className="df-table">
             <thead><tr><th>SO No.</th><th>Customer</th><th>SO Date</th><th className="align-right">Total</th><th className="align-center">Status</th><th>Actions</th></tr></thead>
             <tbody>
-              {filtered.map(o => (
+              {paged.map(o => (
                 <tr key={o.id} className="df-tr">
                   <td><button className="df-link-btn" onClick={() => openEdit(o)}>{o.id}</button></td>
                   <td className="df-vendor">{o.customer}</td>
@@ -103,7 +106,7 @@ export default function SalesOrdersPage() {
               ))}
             </tbody>
           </table>
-          <div className="df-footer"><span className="df-count">Showing {filtered.length} of {orders.length}</span></div>
+          <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
       <SOModal isOpen={modalOpen} onClose={close} onSave={handleSave} onCreateInvoice={handleCreateInvoice} editOrder={editOrder} />

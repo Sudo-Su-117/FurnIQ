@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewAccountModal from './NewAccountModal'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './ChartOfAccountsPage.css'
 
 /* ─── Pre-configured accounts ─── */
@@ -65,6 +66,8 @@ export default function ChartOfAccountsPage() {
     if (rows.length) acc[g] = rows
     return acc
   }, {})
+
+  const { page, setPage } = usePagination(filtered, 20)
 
   const openAdd  = ()  => { setEditAccount(null); setModalOpen(true) }
   const openEdit = (a) => { setEditAccount(a);    setModalOpen(true) }
@@ -145,9 +148,7 @@ export default function ChartOfAccountsPage() {
           }
         </div>
 
-        <div className="coa-footer-count">
-          Showing {filtered.length} of {totalCount} accounts
-        </div>
+        <Pagination total={filtered.length} page={page} pageSize={20} onChange={setPage} />
       </div>
 
       <NewAccountModal

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewProductModal from './NewProductModal'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './ProductsPage.css'
 
 const LOW_STOCK_THRESHOLD = 4
@@ -58,6 +59,8 @@ export default function ProductsPage() {
     const matchType = typeFilter === 'All' || p.type === typeFilter.toUpperCase()
     return matchSearch && matchType
   })
+
+  const { page: listPage, setPage: setListPage, paged: pagedProducts, total: totalFiltered } = usePagination(filtered, 10)
 
   const openAdd  = ()  => { setEditProduct(null); setModalOpen(true) }
   const openEdit = (p) => { setEditProduct(p);    setModalOpen(true) }
@@ -136,7 +139,7 @@ export default function ProductsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map(p => (
+                    {pagedProducts.map(p => (
                       <tr key={p.id}>
                         {/* Name */}
                         <td>
@@ -180,13 +183,7 @@ export default function ProductsPage() {
                 </table>
               )
             }
-            <div className="pp-footer">
-              <span className="pp-count">Showing 1–{filtered.length} of {products.length}</span>
-              <div className="pp-pagination">
-                <button className="pp-page-btn pp-page-btn--active">1</button>
-                <button className="pp-page-btn">2</button>
-              </div>
-            </div>
+            <Pagination total={totalFiltered} page={listPage} pageSize={10} onChange={setListPage} />
           </div>
         )}
 

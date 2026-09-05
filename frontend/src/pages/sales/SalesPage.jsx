@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import DataTable from '../../components/DataTable'
+import Pagination, { usePagination } from '../../components/Pagination'
 import './SalesPage.css'
 
 /* ---- Mock data ---- */
@@ -47,6 +48,8 @@ export default function SalesPage() {
       String(v).toLowerCase().includes(search.toLowerCase())
     )
   )
+
+  const { page, setPage, paged, total } = usePagination(filtered, 10)
 
   const handleTabClick = (idx) => {
     navigate(`/dashboard/sales/${TABS[idx].key}`)
@@ -105,15 +108,10 @@ export default function SalesPage() {
           </div>
 
           {/* Table */}
-          <DataTable columns={columns} rows={filtered} />
+          <DataTable columns={columns} rows={paged} />
 
           {/* Footer */}
-          <div className="sp-footer">
-            <span className="sp-count">Showing 1–{filtered.length} of {data.length}</span>
-            <div className="sp-pagination">
-              <button className="sp-page-btn sp-page-btn--active" aria-current="page">1</button>
-            </div>
-          </div>
+          <Pagination total={total} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
     </DashboardLayout>
