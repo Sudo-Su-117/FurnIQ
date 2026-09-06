@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { compressImage } from '../../utils/imageHelper'
 import './NewProductModal.css'
 
 const EMPTY = {
@@ -18,11 +19,11 @@ const TAX_RATES = [0, 5, 12, 18, 28]
 
 function validate(f) {
   const e = {}
-  if (!f.name.trim())               e.name      = 'Product name is required.'
-  if (!f.type)                      e.type      = 'Select a product type.'
-  if (!f.salesPrice && f.salesPrice !== 0) e.salesPrice = 'Sales price is required.'
-  else if (isNaN(Number(f.salesPrice)) || Number(f.salesPrice) < 0) e.salesPrice = 'Enter a valid price.'
-  if (f.costPrice !== '' && (isNaN(Number(f.costPrice)) || Number(f.costPrice) < 0)) e.costPrice = 'Enter a valid cost.'
+  if (!f.name.trim()) e.name = 'Product name is required.'
+  if (!f.type) e.type = 'Product type is required.'
+  if (f.salesPrice === '' || f.salesPrice === null || f.salesPrice === undefined) e.salesPrice = 'Sales price is required.'
+  else if (isNaN(Number(f.salesPrice)) || Number(f.salesPrice) < 0) e.salesPrice = 'Enter a valid sales price (min ₹0).'
+  if (f.costPrice !== '' && f.costPrice !== null && f.costPrice !== undefined && (isNaN(Number(f.costPrice)) || Number(f.costPrice) < 0)) e.costPrice = 'Enter a valid cost price (min ₹0).'
   return e
 }
 
@@ -38,10 +39,10 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
   const catRef    = useRef(null)
 
   // Combine existing + any new the user typed
-  const [allCats, setAllCats] = useState([...new Set(existingCategories)])
+  const [allCats, setAllCats] = useState([...new Set((existingCategories || []).filter(Boolean))])
 
   useEffect(() => {
-    setAllCats([...new Set(existingCategories)])
+    setAllCats([...new Set((existingCategories || []).filter(Boolean))])
   }, [existingCategories])
 
   useEffect(() => {
@@ -56,14 +57,15 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
           stock:        editProduct.stock        ?? '',
           taxRate:      editProduct.taxRate      ?? 18,
           image:        editProduct.image        ?? null,
-          imagePreview: editProduct.imagePreview ?? null,
+          imagePreview: editProduct.imagePreview ?? editProduct.image ?? null,
         })
-        setCatInput(editProduct.category ?? '')
+        setCatInput(editProduct.category || '')
       } else {
         setFields(EMPTY)
         setCatInput('')
       }
       setErrors({})
+      setCatDropOpen(false)
       setConfirmed(false)
     }
   }, [isOpen, editProduct])
@@ -96,26 +98,33 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
     setConfirmed(false)
   }
 
-  const handleImageChange = (e) => {
+  const handleImageChange = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onloadend = () => setFields(p => ({ ...p, image: file, imagePreview: reader.result }))
-    reader.readAsDataURL(file)
+    try {
+      const compressedUri = await compressImage(file, { maxWidth: 800, maxHeight: 800, quality: 0.85 })
+      setFields(p => ({ ...p, image: file, imagePreview: compressedUri }))
+    } catch (err) {
+      console.error('Error compressing product image:', err)
+    }
   }
 
-  const handleImageDrop = (e) => {
+  const handleImageDrop = async (e) => {
     e.preventDefault()
     const file = e.dataTransfer.files[0]
     if (!file?.type.startsWith('image/')) return
-    const reader = new FileReader()
-    reader.onloadend = () => setFields(p => ({ ...p, image: file, imagePreview: reader.result }))
-    reader.readAsDataURL(file)
+    try {
+      const compressedUri = await compressImage(file, { maxWidth: 800, maxHeight: 800, quality: 0.85 })
+      setFields(p => ({ ...p, image: file, imagePreview: compressedUri }))
+    } catch (err) {
+      console.error('Error compressing dropped product image:', err)
+    }
   }
 
   // Category creatable logic
-  const catFiltered = allCats.filter(c => c.toLowerCase().includes(catInput.toLowerCase()))
-  const canCreate   = catInput.trim() && !allCats.some(c => c.toLowerCase() === catInput.toLowerCase())
+  const safeCatInput = (catInput || '').toLowerCase()
+  const catFiltered = allCats.filter(c => Boolean(c) && String(c).toLowerCase().includes(safeCatInput))
+  const canCreate   = catInput.trim() && !allCats.some(c => Boolean(c) && String(c).toLowerCase() === catInput.trim().toLowerCase())
 
   const selectCat = (c) => {
     setFields(p => ({ ...p, category: c }))
@@ -183,7 +192,9 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
 
               {/* Product Name */}
               <div className="npm-row">
-                <label className="npm-lbl" htmlFor="npm-name">Product Name</label>
+                <label className="npm-lbl" htmlFor="npm-name">
+                  Product Name <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="npm-input-wrap">
                   <input ref={firstRef} id="npm-name" name="name" type="text"
                     className={`npm-input npm-input--ul${errors.name ? ' npm-input--err' : ''}`}
@@ -195,7 +206,9 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
 
               {/* Product Type — dropdown */}
               <div className="npm-row">
-                <label className="npm-lbl" htmlFor="npm-type">Product Type</label>
+                <label className="npm-lbl" htmlFor="npm-type">
+                  Product Type <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="npm-input-wrap">
                   <select id="npm-type" name="type"
                     className={`npm-input npm-input--ul npm-select${errors.type ? ' npm-input--err' : ''}`}
@@ -235,7 +248,9 @@ export default function NewProductModal({ isOpen, onClose, onSave, editProduct, 
 
               {/* Sales Price */}
               <div className="npm-row">
-                <label className="npm-lbl" htmlFor="npm-sales">Sales Price</label>
+                <label className="npm-lbl" htmlFor="npm-sales">
+                  Sales Price <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="npm-input-wrap">
                   <div className="npm-price-wrap">
                     <span className="npm-price-prefix">₹</span>

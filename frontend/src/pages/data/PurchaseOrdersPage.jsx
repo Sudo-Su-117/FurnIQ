@@ -2,41 +2,76 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './DataForms.css'
-
-const VENDORS = ['Timber World', 'Steel Hub', 'Fabric Co.', 'Godrej Interio Ltd.']
-const PRODUCTS = [
-  { name: 'Oak Dining Table',     unitPrice: 28000 },
-  { name: 'Rosewood Sofa Set',    unitPrice: 52000 },
-  { name: 'Teak Coffee Table',    unitPrice: 13500 },
-  { name: 'Wicker Armchair',      unitPrice: 8200  },
-  { name: 'Sheesham Bookshelf',   unitPrice: 10800 },
-  { name: 'Bedroom Combo',        unitPrice: 82000 },
-]
-const BUDGET_LIMIT = 200000
-
-const INITIAL_POS = [
-  { id: 'PO-001', vendor: 'Timber World', vendorId: 'VEND-001', address: 'Mumbai, Maharashtra', date: '2026-09-01', lines: [], total: 73160, status: 'Confirmed' },
-  { id: 'PO-002', vendor: 'Steel Hub',    vendorId: 'VEND-002', address: 'Pune, Maharashtra',   date: '2026-09-02', lines: [], total: 45430, status: 'Billed'     },
-  { id: 'PO-003', vendor: 'Fabric Co.',   vendorId: 'VEND-003', address: 'Nagpur, Maharashtra', date: '2026-09-03', lines: [], total: 107380, status: 'Draft'     },
-]
 
 const STATUS_STYLE = { Draft: 'df-badge--draft', Confirmed: 'df-badge--confirmed', Billed: 'df-badge--billed' }
 const fmtINR = (n) => `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-const EMPTY_LINE = { product: '', qty: '', month: '', price: '', available: '', day: '', unitPrice: '', total: 0 }
-const EMPTY_PO   = { vendor: '', address: '', date: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] }
+const EMPTY_LINE = { product: '', productId: '', qty: '', month: '', price: '', available: '', day: '', unitPrice: '', total: 0 }
+const EMPTY_PO   = { vendor: '', vendorId: '', address: '', date: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] }
 
-let poCounter = INITIAL_POS.length + 1
-function nextPoId() { return `PO-${String(poCounter++).padStart(3, '0')}` }
+import { api, extractList } from '../../services/api'
 
 export default function PurchaseOrdersPage() {
   const navigate = useNavigate()
-  const [orders,      setOrders]      = useState(INITIAL_POS)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [orders,      setOrders]      = useState([])
+  const [vendors,     setVendors]     = useState([])
+  const [products,    setProducts]    = useState([])
+  const [loading,     setLoading]     = useState(false)
   const [search,      setSearch]      = useState('')
   const [statusFlt,   setStatusFlt]   = useState('All')
   const [modalOpen,   setModalOpen]   = useState(false)
   const [editOrder,   setEditOrder]   = useState(null)
+
+  const loadOrders = useCallback(() => {
+    setLoading(true)
+    api.purchases.listOrders({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(o => ({
+          ...o,
+          id: o.orderNumber || o.id,
+          rawId: o.id,
+          vendor: o.vendor?.name || 'Vendor',
+          vendorId: o.vendorId,
+          date: o.orderDate ? new Date(o.orderDate).toISOString().split('T')[0] : '',
+          total: Number(o.totalAmount || 0),
+          status: o.status === 'CONFIRMED' ? 'Confirmed' : 'Draft',
+          lines: (o.lines || []).map(l => {
+            const qty = Number(l.quantity || l.qty || 0)
+            const unitPrice = Number(l.unitPrice || 0)
+            const lineTotal = Number(l.total || l.totalPrice || 0) || (qty * unitPrice)
+            return {
+              product: l.product?.name || (typeof l.product === 'string' ? l.product : ''),
+              productId: l.productId || l.product?.id || '',
+              qty: qty || '',
+              unitPrice: unitPrice,
+              total: lineTotal,
+            }
+          })
+        }))
+        setOrders(mapped)
+      })
+      .catch(err => console.warn('Could not load live purchase orders:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadOrders()
+    api.contacts.list({ limit: 100 }).then(res => {
+      const list = extractList(res)
+      setVendors(list)
+    }).catch(e => console.warn('Failed to load vendors:', e.message))
+
+    api.products.list({ limit: 100 }).then(res => {
+      const list = extractList(res)
+      setProducts(list)
+    }).catch(e => console.warn('Failed to load products:', e.message))
+  }, [loadOrders])
 
   const filtered = orders.filter(o => {
     const q = search.toLowerCase()
@@ -51,31 +86,127 @@ export default function PurchaseOrdersPage() {
   const openEdit = (o) => { setEditOrder(o);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditOrder(null) }
 
-  const handleSave = (data, newStatus) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    if (editOrder) {
-      setOrders(prev => prev.map(o => o.id === editOrder.id ? { ...o, ...data, total, status: newStatus || o.status } : o))
-    } else {
-      const id = nextPoId()
-      setOrders(prev => [...prev, { id, total, status: newStatus || 'Draft', ...data }])
+  const handleSave = async (data, newStatus) => {
+    try {
+      if (editOrder?.rawId) {
+        if (newStatus === 'Confirmed' && editOrder.status !== 'Confirmed') {
+          await api.purchases.confirmOrder(editOrder.rawId)
+          toast.success(`Purchase Order ${editOrder.id} confirmed!`)
+        } else {
+          toast.success(`Purchase Order ${editOrder.id} updated!`)
+        }
+        loadOrders()
+        close()
+        return
+      }
+
+      let vId = data.vendorId
+      if (!vId && vendors.length > 0) {
+        const found = vendors.find(v => v.name.toLowerCase() === (data.vendor || '').toLowerCase())
+        if (found) vId = found.id
+      }
+      if (!vId && vendors.length > 0) vId = vendors[0].id
+
+      const validLines = data.lines.filter(l => (l.product || l.productId) && Number(l.qty) > 0).map(l => {
+        let pId = l.productId
+        if (!pId) {
+          const foundP = products.find(p => p.name.toLowerCase() === (l.product || '').toLowerCase())
+          if (foundP) pId = foundP.id
+        }
+        if (!pId && products.length > 0) pId = products[0].id
+        return {
+          productId: pId,
+          quantity: parseInt(l.qty, 10) || 1,
+          unitPrice: parseFloat(l.unitPrice) || 0,
+        }
+      })
+
+      if (validLines.length === 0 && products.length > 0) {
+        validLines.push({
+          productId: products[0].id,
+          quantity: 1,
+          unitPrice: Number(products[0].costPrice || products[0].salesPrice || 1000),
+        })
+      }
+
+      const payload = {
+        vendorId: vId,
+        orderDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+        lines: validLines,
+      }
+
+      const created = await api.purchases.createOrder(payload)
+      if (newStatus === 'Confirmed' && created?.id) {
+        await api.purchases.confirmOrder(created.id)
+        toast.success(`Purchase Order ${created.orderNumber || 'PO'} confirmed!`)
+      } else {
+        toast.success(`Purchase Order ${created?.orderNumber || 'PO'} created successfully!`)
+      }
+      loadOrders()
+      close()
+    } catch (err) {
+      toast.error('Error saving purchase order: ' + err.message)
     }
-    close()
   }
 
-  const handleCreateBill = (data) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    const id = editOrder?.id || nextPoId()
-    setOrders(prev => {
-      const exists = prev.find(o => o.id === id)
-      if (exists) return prev.map(o => o.id === id ? { ...o, ...data, total, status: 'Billed' } : o)
-      return [...prev, { id, total, status: 'Billed', ...data }]
+  const handleCreateBill = async (data) => {
+    try {
+      let poId = editOrder?.rawId
+      if (!poId) {
+        let vId = data.vendorId
+        if (!vId && vendors.length > 0) {
+          const found = vendors.find(v => v.name.toLowerCase() === (data.vendor || '').toLowerCase())
+          if (found) vId = found.id
+        }
+        if (!vId && vendors.length > 0) vId = vendors[0].id
+
+        const validLines = data.lines.filter(l => (l.product || l.productId) && Number(l.qty) > 0).map(l => {
+          let pId = l.productId
+          if (!pId) {
+            const foundP = products.find(p => p.name.toLowerCase() === (l.product || '').toLowerCase())
+            if (foundP) pId = foundP.id
+          }
+          if (!pId && products.length > 0) pId = products[0].id
+          return {
+            productId: pId,
+            quantity: parseInt(l.qty, 10) || 1,
+            unitPrice: parseFloat(l.unitPrice) || 0,
+          }
+        })
+        const created = await api.purchases.createOrder({
+          vendorId: vId,
+          orderDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+          lines: validLines.length ? validLines : [{ productId: products[0]?.id, quantity: 1, unitPrice: 1000 }],
+        })
+        await api.purchases.confirmOrder(created.id)
+        poId = created.id
+      } else {
+        if (editOrder.status !== 'Confirmed' && editOrder.status !== 'Billed') {
+          await api.purchases.confirmOrder(poId)
+        }
+      }
+      await api.purchases.createBillFromPO(poId)
+      loadOrders()
+      close()
+      toast.success('Vendor bill generated from Purchase Order!')
+      navigate('/dashboard/data/vendor-bills')
+    } catch (err) {
+      toast.error('Error creating bill from PO: ' + err.message)
+    }
+  }
+
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Purchase Order',
+      message: `Are you sure you want to delete purchase order "${id}"?`,
+      detail: 'This will remove the purchase order record from your purchase history.',
+      confirmText: 'Delete Order',
+      confirmVariant: 'danger',
     })
-    close()
-    navigate('/dashboard/data/vendor-bills', { state: { fromPO: { ...data, poId: id, total } } })
-  }
-
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this purchase order?')) setOrders(prev => prev.filter(o => o.id !== id))
+    if (ok) {
+      setOrders(prev => prev.filter(o => o.id !== id))
+      toast.info(`Purchase Order ${id} deleted`)
+    }
   }
 
   return (
@@ -114,13 +245,21 @@ export default function PurchaseOrdersPage() {
           <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
-      <POModal isOpen={modalOpen} onClose={close} onSave={handleSave} onCreateBill={handleCreateBill} editOrder={editOrder} />
+      <POModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        onCreateBill={handleCreateBill}
+        editOrder={editOrder}
+        vendors={vendors}
+        products={products}
+      />
     </DashboardLayout>
   )
 }
 
 /* ── PO Form Modal ── */
-function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
+function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder, vendors = [], products = [] }) {
   const [fields,    setFields]    = useState(EMPTY_PO)
   const [errors,    setErrors]    = useState({})
   const [confirmed, setConfirmed] = useState(false)
@@ -131,8 +270,18 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
   useEffect(() => {
     if (isOpen) {
       if (editOrder) {
-        setFields({ vendor: editOrder.vendor||'', address: editOrder.address||'', date: editOrder.date||'',
-          lines: editOrder.lines?.length ? editOrder.lines.map(l=>({...l})) : [{ ...EMPTY_LINE },{ ...EMPTY_LINE }] })
+        setFields({
+          vendor: editOrder.vendor||'',
+          vendorId: editOrder.vendorId||'',
+          address: editOrder.address||'',
+          date: editOrder.date||'',
+          lines: editOrder.lines?.length ? editOrder.lines.map(l => {
+            const qty = Number(l.qty || l.quantity || 0)
+            const unitPrice = Number(l.unitPrice || 0)
+            const total = Number(l.total || l.totalPrice || 0) || (qty * unitPrice)
+            return { ...l, qty: qty || '', unitPrice, total }
+          }) : [{ ...EMPTY_LINE },{ ...EMPTY_LINE }]
+        })
         setConfirmed(editOrder.status === 'Confirmed' || editOrder.status === 'Billed')
       } else { setFields(EMPTY_PO); setConfirmed(false) }
       setErrors({})
@@ -151,8 +300,11 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
 
   if (!isOpen) return null
 
-  const totalAmount = fields.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-  const overBudget  = totalAmount > BUDGET_LIMIT
+  const BUDGET_LIMIT = 200000
+  const subtotalUntaxed = fields.lines.reduce((s, l) => s + (Number(l.total) || ((Number(l.qty)||0) * (Number(l.unitPrice)||0))), 0)
+  const taxAmount       = subtotalUntaxed * 0.18
+  const totalAmount     = subtotalUntaxed + taxAmount
+  const overBudget      = totalAmount > BUDGET_LIMIT
 
   const changeField = (name, value) => { setFields(p => ({ ...p, [name]: value })); setErrors(p => ({ ...p, [name]: undefined })) }
 
@@ -172,7 +324,8 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
 
   const selectProduct = (idx, prod) => {
     updateLine(idx, 'product', prod.name)
-    updateLine(idx, 'unitPrice', prod.unitPrice)
+    updateLine(idx, 'productId', prod.id)
+    updateLine(idx, 'unitPrice', prod.costPrice || prod.salesPrice || 0)
     setProdDropIdx(null)
   }
 
@@ -181,8 +334,10 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
 
   const validate = () => {
     const e = {}
-    if (!fields.vendor) e.vendor = 'Vendor is required'
+    if (!fields.vendor && !fields.vendorId) e.vendor = 'Vendor is required'
     if (!fields.date)   e.date   = 'Order date is required'
+    const hasValidLine = fields.lines.some(l => (l.product || l.productId) && Number(l.qty) > 0)
+    if (!hasValidLine) e.lines = 'At least one product line with a valid quantity is required'
     return e
   }
 
@@ -197,7 +352,7 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
     onCreateBill(fields)
   }
 
-  const poId = editOrder?.id || `PO-${String(poCounter).padStart(3,'0')}`
+  const poId = editOrder?.id || 'New Draft'
 
   return (
     <div className="dfm-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -233,13 +388,14 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
             <div className="dfm-input-wrap">
               <input id="po-address" type="text" className="dfm-input" placeholder="Delivery address"
                 value={fields.address} onChange={e => changeField('address', e.target.value)} />
-              <span className="dfm-hint">Generally PO address with quantities/products, Month, Price</span>
             </div>
           </div>
 
           {/* Vendor */}
           <div className="dfm-field" ref={vendorRef}>
-            <label className="dfm-lbl">Vendor Name</label>
+            <label className="dfm-lbl">
+              Vendor Name <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap dfm-dropdown-wrap">
               <input ref={firstRef} type="text" className={`dfm-input${errors.vendor ? ' dfm-input--err' : ''}`}
                 placeholder="Select vendor..."
@@ -248,8 +404,12 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
                 onFocus={() => setVendorDrop(true)} autoComplete="off" />
               {vendorDrop && (
                 <div className="dfm-dropdown">
-                  {VENDORS.filter(v => v.toLowerCase().includes(fields.vendor.toLowerCase())).map(v => (
-                    <button key={v} type="button" className="dfm-drop-opt" onMouseDown={() => { changeField('vendor', v); setVendorDrop(false) }}>{v}</button>
+                  {vendors.filter(v => !fields.vendor || v.name.toLowerCase().includes(fields.vendor.toLowerCase())).map(v => (
+                    <button key={v.id} type="button" className="dfm-drop-opt" onMouseDown={() => {
+                      changeField('vendor', v.name)
+                      changeField('vendorId', v.id)
+                      setVendorDrop(false)
+                    }}>{v.name}</button>
                   ))}
                 </div>
               )}
@@ -259,7 +419,9 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
 
           {/* Order Date */}
           <div className="dfm-field">
-            <label className="dfm-lbl" htmlFor="po-date">Order Date</label>
+            <label className="dfm-lbl" htmlFor="po-date">
+              Order Date <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap">
               <input id="po-date" type="date" className={`dfm-input${errors.date ? ' dfm-input--err' : ''}`}
                 value={fields.date} onChange={e => changeField('date', e.target.value)} />
@@ -275,40 +437,36 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
                 <tr>
                   <th style={{width:40}}>Sr No.</th>
                   <th>Product</th>
-                  <th>Qty/Month</th>
-                  <th>Price</th>
-                  <th>Available</th>
-                  <th>Day</th>
-                  <th className="align-right">Unit Price</th>
-                  <th className="align-right">Total</th>
+                  <th style={{width:100}}>Qty</th>
+                  <th className="align-right" style={{width:130}}>Unit Price</th>
+                  <th className="align-right" style={{width:140}}>Total</th>
                   <th style={{width:32}}></th>
                 </tr>
               </thead>
               <tbody>
                 {fields.lines.map((line, idx) => {
-                  const prodOpts = PRODUCTS.filter(p => !line.product || p.name.toLowerCase().includes(line.product.toLowerCase()))
+                  const prodOpts = products.filter(p => !line.product || p.name.toLowerCase().includes(line.product.toLowerCase()))
                   return (
                     <tr key={idx} className="dfm-line-row">
                       <td className="dfm-line-td dfm-line-idx">{idx + 1}</td>
-                      <td className="dfm-line-td" style={{position:'relative'}}>
+                      <td className={`dfm-line-td${prodDropIdx === idx ? ' dfm-line-td--active' : ''}`} style={{position:'relative', zIndex: prodDropIdx === idx ? 1100 : 'auto'}}>
                         <input type="text" className="dfm-line-input" placeholder="Product..."
                           value={line.product}
                           onChange={e => { updateLine(idx, 'product', e.target.value); setProdDropIdx(idx) }}
                           onFocus={() => setProdDropIdx(idx)} autoComplete="off" />
                         {prodDropIdx === idx && prodOpts.length > 0 && (
                           <div className="dfm-line-dropdown">
+                            <div className="dfm-line-dropdown-header">Available Products ({prodOpts.length})</div>
                             {prodOpts.map(p => (
-                              <button key={p.name} type="button" className="dfm-line-opt" onMouseDown={() => selectProduct(idx, p)}>
-                                <span>{p.name}</span><span className="dfm-opt-price">{fmtINR(p.unitPrice)}</span>
+                              <button key={p.id} type="button" className="dfm-line-opt" onMouseDown={() => selectProduct(idx, p)}>
+                                <span className="dfm-opt-name">{p.name}</span>
+                                <span className="dfm-opt-price">{fmtINR(p.costPrice || p.salesPrice)}</span>
                               </button>
                             ))}
                           </div>
                         )}
                       </td>
                       <td className="dfm-line-td"><input type="number" className="dfm-line-input dfm-line-input--num" placeholder="Qty" value={line.qty} onChange={e => updateLine(idx, 'qty', e.target.value)} /></td>
-                      <td className="dfm-line-td"><input type="number" className="dfm-line-input dfm-line-input--num" placeholder="Price" value={line.price} onChange={e => updateLine(idx, 'price', e.target.value)} /></td>
-                      <td className="dfm-line-td"><input type="text" className="dfm-line-input" placeholder="Available" value={line.available} onChange={e => updateLine(idx, 'available', e.target.value)} /></td>
-                      <td className="dfm-line-td"><input type="text" className="dfm-line-input" placeholder="Day" value={line.day} onChange={e => updateLine(idx, 'day', e.target.value)} /></td>
                       <td className="dfm-line-td"><input type="number" className="dfm-line-input dfm-line-input--num" placeholder="0.00" value={line.unitPrice} onChange={e => updateLine(idx, 'unitPrice', e.target.value)} /></td>
                       <td className="dfm-line-td dfm-line-total">{line.total > 0 ? fmtINR(line.total) : '—'}</td>
                       <td className="dfm-line-td">
@@ -320,12 +478,23 @@ function POModal({ isOpen, onClose, onSave, onCreateBill, editOrder }) {
               </tbody>
               <tfoot>
                 <tr className="dfm-total-row">
-                  <td colSpan={7} className="dfm-total-label">Total</td>
+                  <td colSpan={4} className="dfm-total-label">Subtotal (Untaxed)</td>
+                  <td className="dfm-total-val">{fmtINR(subtotalUntaxed)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row">
+                  <td colSpan={4} className="dfm-total-label" style={{ color: '#856404' }}>Taxes (18% GST)</td>
+                  <td className="dfm-total-val" style={{ color: '#856404' }}>{fmtINR(taxAmount)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row" style={{ fontWeight: 700, fontSize: '15px' }}>
+                  <td colSpan={4} className="dfm-total-label">Total Amount</td>
                   <td className="dfm-total-val">{fmtINR(totalAmount)}</td>
                   <td />
                 </tr>
               </tfoot>
             </table>
+            {errors.lines && <span className="dfm-err" style={{ marginTop: 8, fontSize: '12px', fontWeight: 600 }}>{errors.lines}</span>}
             <button type="button" className="dfm-add-line-btn" onClick={addLine}><PlusSmIcon /> Add Line</button>
           </div>
 

@@ -1,96 +1,190 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import './JournalEntryModal.css'
+import { api, extractList } from '../../services/api'
 
-/* ── Static reference data (shared with other pages) ── */
-const COA_OPTIONS = [
-  { code: '1001', name: 'HDFC Bank – Current Account',   type: 'Bank'     },
-  { code: '1002', name: 'Petty Cash',                    type: 'Cash'     },
-  { code: '1003', name: 'Accounts Receivable (Debtors)', type: 'Asset'    },
-  { code: '1004', name: 'Inventory – Furniture',         type: 'Asset'    },
-  { code: '1005', name: 'Workshop Equipment',            type: 'Asset'    },
-  { code: '2001', name: 'Accounts Payable (Creditors)',  type: 'Liability'},
-  { code: '2002', name: 'GST Payable',                   type: 'Liability'},
-  { code: '2003', name: 'Short-term Loan – HDFC',        type: 'Liability'},
-  { code: '3001', name: 'Furniture Sales Income',        type: 'Income'   },
-  { code: '3002', name: 'Service Revenue',               type: 'Income'   },
-  { code: '4001', name: 'Cost of Goods Sold',            type: 'Expenses' },
-  { code: '4002', name: 'Workshop Rent',                 type: 'Expenses' },
-  { code: '4003', name: 'Salaries & Wages',              type: 'Expenses' },
-  { code: '4004', name: 'Utilities & Power',             type: 'Other Expenses'},
-  { code: '4005', name: 'Marketing & Advertising',       type: 'Other Expenses'},
-  { code: '5001', name: "Owner's Capital",               type: 'Capital'  },
-  { code: '5002', name: 'Retained Earnings',             type: 'Capital'  },
-]
-
-const JOURNAL_OPTIONS = [
-  { id: 'JNL-001', name: 'Sales',    type: 'Sales'    },
-  { id: 'JNL-002', name: 'Purchase', type: 'Purchase' },
-  { id: 'JNL-003', name: 'Bank',     type: 'Bank'     },
-  { id: 'JNL-004', name: 'Cash',     type: 'Cash'     },
-]
-
-const CONTACT_OPTIONS = [
-  'Ratan Mehra', 'Godrej Interio Ltd.', 'Ananya Sharma',
-  'Ramesh Timber Works', 'Priya Kapoor', 'Mahindra Living',
-]
-
-const EMPTY_LINE = { account: '', accountCode: '', partner: '', debit: '', credit: '' }
-
-const EMPTY_FORM = {
-  accountingDate: new Date().toISOString().slice(0, 10),
-  journalId: 'JNL-001',
-  journal: 'Sales',
-  partner: '',
-  lines: [
-    { ...EMPTY_LINE },
-    { ...EMPTY_LINE },
-  ],
-}
-
+const EMPTY_LINE = { accountId: '', account: '', accountCode: '', partner: '', debit: '', credit: '' }
+const todayStr = () => new Date().toISOString().slice(0, 10)
 const fmt = (n) => {
   const num = Number(n)
   if (!num) return ''
   return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 }
 
-export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }) {
-  const [form,      setForm]      = useState(EMPTY_FORM)
-  const [errors,    setErrors]    = useState({})
-  const [posted,    setPosted]    = useState(false)
+/* ── FixedDropdown: renders into document.body via portal so it is NEVER
+   clipped by overflow:hidden / overflow:auto ancestors (including the modal panel) ── */
+function FixedDropdown({ anchorRef, open, children }) {
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  useEffect(() => {
+    if (open && anchorRef?.current) {
+      const r = anchorRef.current.getBoundingClientRect()
+      setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 300) })
+    }
+  }, [open, anchorRef])
+  if (!open) return null
+  return createPortal(
+    <div className="jem-line-dropdown"
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 99999 }}>
+      {children}
+    </div>,
+    document.body
+  )
+}
 
-  /* Per-line account / contact dropdown state */
+/* ── LineRow: isolated component with its own input refs for portal positioning ── */
+function LineRow({
+  idx, line, acctSearch, contactSearch,
+  acctOpts, contactOpts, acctOpen, contactOpen,
+  error, canRemove,
+  onAcctChange, onAcctFocus, onAcctBlur, onAcctSelect,
+  onContactChange, onContactFocus, onContactBlur, onContactSelect,
+  onDebitChange, onCreditChange, onRemove,
+}) {
+  const acctInputRef    = useRef(null)
+  const contactInputRef = useRef(null)
+
+  return (
+    <tr className="jem-line-row">
+      {/* Account */}
+      <td className="jem-line-td">
+        <div className="jem-line-acct-wrap">
+          <input ref={acctInputRef} type="text"
+            className={`jem-line-input${error ? ' jem-input--err' : ''}`}
+            placeholder="Search account..."
+            value={acctSearch}
+            onChange={e => onAcctChange(e.target.value)}
+            onFocus={onAcctFocus}
+            onBlur={onAcctBlur}
+            autoComplete="off"
+          />
+          {line.accountCode && <span className="jem-acct-code-tag">{line.accountCode}</span>}
+        </div>
+        <FixedDropdown anchorRef={acctInputRef} open={acctOpen && acctOpts.length > 0}>
+          {acctOpts.map(a => (
+            <button key={a.id} type="button" className="jem-line-opt"
+              onMouseDown={e => { e.preventDefault(); onAcctSelect(a) }}>
+              <span className="jem-opt-code">{a.code}</span>
+              <span className="jem-opt-name">{a.name}</span>
+              <span className="jem-opt-type">{a.type}</span>
+            </button>
+          ))}
+        </FixedDropdown>
+        {error && <span className="jem-line-err">{error}</span>}
+      </td>
+
+      {/* Partner */}
+      <td className="jem-line-td">
+        <input ref={contactInputRef} type="text"
+          className="jem-line-input"
+          placeholder="Partner..."
+          value={contactSearch}
+          onChange={e => onContactChange(e.target.value)}
+          onFocus={onContactFocus}
+          onBlur={onContactBlur}
+          autoComplete="off"
+        />
+        <FixedDropdown anchorRef={contactInputRef} open={contactOpen && contactOpts.length > 0}>
+          {contactOpts.map(c => (
+            <button key={c.id} type="button" className="jem-line-opt"
+              onMouseDown={e => { e.preventDefault(); onContactSelect(c) }}>
+              <span className="jem-opt-name">{c.name}</span>
+              <span className="jem-opt-type" style={{ fontSize: '10px' }}>{c.type}</span>
+            </button>
+          ))}
+        </FixedDropdown>
+      </td>
+
+      {/* Debit */}
+      <td className="jem-line-td">
+        <input type="number" min="0" step="0.01"
+          className="jem-line-input jem-line-input--num"
+          placeholder="0.00" value={line.debit}
+          onChange={e => onDebitChange(e.target.value)}
+        />
+      </td>
+
+      {/* Credit */}
+      <td className="jem-line-td">
+        <input type="number" min="0" step="0.01"
+          className="jem-line-input jem-line-input--num"
+          placeholder="0.00" value={line.credit}
+          onChange={e => onCreditChange(e.target.value)}
+        />
+      </td>
+
+      {/* Remove */}
+      <td className="jem-line-td jem-line-td--remove">
+        {canRemove && (
+          <button type="button" className="jem-remove-btn" onClick={onRemove} aria-label="Remove line">
+            <TrashIcon />
+          </button>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+/* ── Main Modal ── */
+export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }) {
+  const [form, setForm] = useState({
+    accountingDate: todayStr(),
+    journalId: '', journal: '', reference: '',
+    lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }],
+  })
+  const [errors,  setErrors]  = useState({})
+  const [saving,  setSaving]  = useState(false)
+  const [saveErr, setSaveErr] = useState('')
+
+  const [accounts, setAccounts] = useState([])
+  const [journals, setJournals] = useState([])
+  const [contacts, setContacts] = useState([])
+
+  const [acctSearch,    setAcctSearch]    = useState(['', ''])
+  const [contactSearch, setContactSearch] = useState(['', ''])
   const [acctDropIdx,    setAcctDropIdx]    = useState(null)
   const [contactDropIdx, setContactDropIdx] = useState(null)
-  const [acctSearch,     setAcctSearch]     = useState([])
-  const [contactSearch,  setContactSearch]  = useState([])
-
-  /* Journal dropdown */
   const [jnlDropOpen, setJnlDropOpen] = useState(false)
-  const jnlRef  = useRef(null)
+  const jnlRef   = useRef(null)
   const firstRef = useRef(null)
 
-  /* ── Initialise form ── */
+  /* ── Load live master data once ── */
+  useEffect(() => {
+    api.accounting.getAccounts()
+      .then(res => setAccounts(extractList(res) || [])).catch(() => {})
+    api.accounting.getJournals()
+      .then(res => setJournals(extractList(res) || [])).catch(() => {})
+    api.contacts.list()
+      .then(res => setContacts(extractList(res) || [])).catch(() => {})
+  }, [])
+
+  /* ── Initialise form on open ── */
   useEffect(() => {
     if (isOpen) {
       if (editEntry) {
+        const lines = editEntry.lines?.length
+          ? editEntry.lines.map(l => ({
+              accountId:   l.accountId || l.account?.id || '',
+              account:     l.account?.name || l.account || '',
+              accountCode: l.account?.code || l.accountCode || '',
+              partner:     l.partner || '',
+              debit:       l.debit || '', credit: l.credit || '',
+            }))
+          : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]
         setForm({
-          accountingDate: editEntry.accountingDate || new Date().toISOString().slice(0,10),
-          journalId:      editEntry.journalId      || 'JNL-001',
-          journal:        editEntry.journal        || 'Sales',
-          partner:        editEntry.partner        || '',
-          lines: editEntry.lines?.length
-            ? editEntry.lines.map(l => ({ ...l }))
-            : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }],
+          accountingDate: editEntry.accountingDate || todayStr(),
+          journalId:      editEntry.journalId || editEntry.journal?.id || '',
+          journal:        editEntry.journal?.name || editEntry.journal || '',
+          reference:      editEntry.reference || '',
+          lines,
         })
-        setAcctSearch(editEntry.lines?.map(l => l.account || '') || ['',''])
-        setContactSearch(editEntry.lines?.map(l => l.partner || '') || ['',''])
+        setAcctSearch(lines.map(l => l.account || ''))
+        setContactSearch(lines.map(l => l.partner || ''))
       } else {
-        setForm(EMPTY_FORM)
-        setAcctSearch(['',''])
-        setContactSearch(['',''])
+        setForm({ accountingDate: todayStr(), journalId: '', journal: '', reference: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] })
+        setAcctSearch(['', ''])
+        setContactSearch(['', ''])
       }
-      setErrors({})
-      setPosted(false)
+      setErrors({}); setSaveErr('')
     }
   }, [isOpen, editEntry])
 
@@ -102,12 +196,10 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
     return () => document.removeEventListener('keydown', handleKey)
   }, [isOpen, handleKey])
 
-  /* Close dropdowns on outside click */
+  /* Close journal dropdown on outside click */
   useEffect(() => {
     const handler = (e) => {
       if (jnlRef.current && !jnlRef.current.contains(e.target)) setJnlDropOpen(false)
-      setAcctDropIdx(null)
-      setContactDropIdx(null)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -115,18 +207,16 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
 
   if (!isOpen) return null
 
-  /* ── Computed totals ── */
-  const totalDebit  = form.lines.reduce((s,l) => s + (Number(l.debit)  || 0), 0)
-  const totalCredit = form.lines.reduce((s,l) => s + (Number(l.credit) || 0), 0)
+  const totalDebit  = form.lines.reduce((s, l) => s + (Number(l.debit)  || 0), 0)
+  const totalCredit = form.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0)
   const balanced    = totalDebit > 0 && totalDebit === totalCredit
 
-  /* ── Helpers ── */
   const updateLine = (idx, field, value) => {
     setForm(p => {
-      const lines = p.lines.map((l,i) => i === idx ? { ...l, [field]: value } : l)
+      const lines = p.lines.map((l, i) => i === idx ? { ...l, [field]: value } : l)
       return { ...p, lines }
     })
-    if (errors[`line-${idx}-${field}`]) setErrors(p => ({ ...p, [`line-${idx}-${field}`]: undefined }))
+    if (errors[`line-${idx}-account`]) setErrors(p => ({ ...p, [`line-${idx}-account`]: undefined }))
     if (errors.balance) setErrors(p => ({ ...p, balance: undefined }))
   }
 
@@ -138,21 +228,28 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
 
   const removeLine = (idx) => {
     if (form.lines.length <= 2) return
-    setForm(p => ({ ...p, lines: p.lines.filter((_,i) => i !== idx) }))
-    setAcctSearch(p => p.filter((_,i) => i !== idx))
-    setContactSearch(p => p.filter((_,i) => i !== idx))
+    setForm(p => ({ ...p, lines: p.lines.filter((_, i) => i !== idx) }))
+    setAcctSearch(p => p.filter((_, i) => i !== idx))
+    setContactSearch(p => p.filter((_, i) => i !== idx))
   }
 
   const selectAccount = (idx, acct) => {
-    updateLine(idx, 'account', acct.name)
-    updateLine(idx, 'accountCode', acct.code)
+    setForm(p => {
+      const lines = p.lines.map((l, i) => i === idx
+        ? { ...l, accountId: acct.id, account: acct.name, accountCode: acct.code } : l)
+      return { ...p, lines }
+    })
     const s = [...acctSearch]; s[idx] = acct.name; setAcctSearch(s)
     setAcctDropIdx(null)
+    if (errors[`line-${idx}-account`]) setErrors(p => ({ ...p, [`line-${idx}-account`]: undefined }))
   }
 
-  const selectContact = (idx, name) => {
-    updateLine(idx, 'partner', name)
-    const s = [...contactSearch]; s[idx] = name; setContactSearch(s)
+  const selectContact = (idx, contact) => {
+    const s = [...contactSearch]; s[idx] = contact.name; setContactSearch(s)
+    setForm(p => {
+      const lines = p.lines.map((l, i) => i === idx ? { ...l, partner: contact.name } : l)
+      return { ...p, lines }
+    })
     setContactDropIdx(null)
   }
 
@@ -162,51 +259,89 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
     if (errors.journal) setErrors(p => ({ ...p, journal: undefined }))
   }
 
-  /* ── Validation ── */
-  const validate = () => {
+  const buildPayload = (status) => ({
+    journalId:      form.journalId,
+    accountingDate: form.accountingDate,
+    reference:      form.reference || undefined,
+    status,
+    lines: form.lines
+      .filter(l => l.accountId && (Number(l.debit) > 0 || Number(l.credit) > 0))
+      .map(l => ({ accountId: l.accountId, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, description: l.partner || undefined })),
+  })
+
+  const validateDraft = () => {
     const e = {}
-    if (!form.accountingDate)  e.date    = 'Accounting date is required.'
-    if (!form.journal)         e.journal = 'Select a journal.'
-    form.lines.forEach((l, i) => {
-      if (!l.account) e[`line-${i}-account`] = 'Required'
-    })
-    if (!balanced) e.balance = `Debit (${fmt(totalDebit)}) ≠ Credit (${fmt(totalCredit)}). Please balance the entry.`
+    if (!form.accountingDate) e.date    = 'Accounting date is required.'
+    if (!form.journalId)      e.journal = 'Select a journal.'
+    const hasAnyLine = form.lines.some(l => l.accountId && (Number(l.debit) > 0 || Number(l.credit) > 0))
+    if (!hasAnyLine) e.lines = 'Add at least one line with an account and an amount.'
     return e
   }
 
-  const handlePost = () => {
-    const v = validate()
-    if (Object.keys(v).length) { setErrors(v); return }
-    setPosted(true)
-    onSave({ ...form, status: 'Posted', date: new Date(form.accountingDate).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }) })
+  const validatePost = () => {
+    const e = validateDraft()
+    if (!balanced) e.balance = `Debit (${fmt(totalDebit)}) ≠ Credit (${fmt(totalCredit)}). Balance the entry to post.`
+    return e
   }
 
-  const handleSaveDraft = (e) => {
+  const handleSaveDraft = async (e) => {
     e.preventDefault()
-    const v = validate()
+    const v = validateDraft()
     if (Object.keys(v).length) { setErrors(v); return }
-    onSave({ ...form, status: 'Draft', date: new Date(form.accountingDate).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }) })
+    setSaving(true); setSaveErr('')
+    try {
+      const saved = await api.accounting.createJournalEntry(buildPayload('DRAFT'))
+      onSave({ ...form, status: 'Draft', id: saved?.id, number: saved?.entryNumber })
+    } catch (err) {
+      setSaveErr(err.message || 'Failed to save draft. Please try again.')
+    } finally { setSaving(false) }
+  }
+
+  const handlePost = async () => {
+    const v = validatePost()
+    if (Object.keys(v).length) { setErrors(v); return }
+    setSaving(true); setSaveErr('')
+    try {
+      const saved = await api.accounting.createJournalEntry(buildPayload('POSTED'))
+      onSave({ ...form, status: 'Posted', id: saved?.id, number: saved?.entryNumber })
+    } catch (err) {
+      setSaveErr(err.message || 'Failed to post entry. Please try again.')
+    } finally { setSaving(false) }
+  }
+
+  const filteredAccounts = (idx) => {
+    const q = (acctSearch[idx] || '').toLowerCase()
+    if (!q) return accounts
+    return accounts.filter(a => a.name?.toLowerCase().includes(q) || a.code?.includes(q))
+  }
+
+  const filteredContacts = (idx) => {
+    const q = (contactSearch[idx] || '').toLowerCase()
+    if (!q) return contacts
+    return contacts.filter(c => c.name?.toLowerCase().includes(q))
   }
 
   const isEditing = Boolean(editEntry)
+
+  const resetForm = () => {
+    setForm({ accountingDate: todayStr(), journalId: '', journal: '', reference: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] })
+    setAcctSearch(['', '']); setContactSearch(['', '']); setErrors({}); setSaveErr('')
+  }
 
   return (
     <div className="jem-overlay" role="dialog" aria-modal="true" aria-labelledby="jem-title"
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="jem-panel">
 
-        {/* ── Topbar: Post · Cancel · Back ── */}
+        {/* Topbar */}
         <div className="jem-topbar">
           <div className="jem-topbar-left">
-            <button type="button" className="jem-btn jem-btn--post" onClick={handlePost}>
-              {posted ? '✓ Posted' : 'Post'}
+            <button type="button" className="jem-btn jem-btn--post" onClick={handlePost} disabled={saving}>
+              {saving ? '…' : 'Post'}
             </button>
           </div>
           <div className="jem-topbar-right">
-            <button type="button" className="jem-btn jem-btn--cancel" onClick={() => {
-              setForm(EMPTY_FORM); setAcctSearch(['','']); setContactSearch(['',''])
-              setErrors({}); setPosted(false)
-            }}>Cancel</button>
+            <button type="button" className="jem-btn jem-btn--cancel" onClick={resetForm}>Cancel</button>
             <button type="button" className="jem-btn jem-btn--back" onClick={onClose}>Back</button>
             <button type="button" className="jem-close" onClick={onClose} aria-label="Close"><XIcon /></button>
           </div>
@@ -217,17 +352,16 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
         </h2>
 
         <form onSubmit={handleSaveDraft} noValidate>
-          {/* ── Header fields ── */}
+          {/* Header fields */}
           <div className="jem-header-fields">
-
-            {/* Accounting Date */}
+            {/* Date */}
             <div className="jem-field">
               <label className="jem-lbl" htmlFor="jem-date">Accounting Date</label>
               <div className="jem-input-wrap">
                 <input ref={firstRef} id="jem-date" type="date"
                   className={`jem-input${errors.date ? ' jem-input--err' : ''}`}
                   value={form.accountingDate}
-                  onChange={e => { setForm(p=>({...p, accountingDate: e.target.value})); setErrors(p=>({...p,date:undefined})) }}
+                  onChange={e => { setForm(p => ({ ...p, accountingDate: e.target.value })); setErrors(p => ({ ...p, date: undefined })) }}
                 />
                 {errors.date && <span className="jem-err">{errors.date}</span>}
               </div>
@@ -245,34 +379,43 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
                 </button>
                 {jnlDropOpen && (
                   <div className="jem-jnl-dropdown">
-                    {JOURNAL_OPTIONS.map(j => (
-                      <button key={j.id} type="button" className="jem-jnl-option"
-                        onClick={() => selectJournal(j)}>
-                        <span className={`jem-jnl-dot jem-jnl-dot--${j.type.toLowerCase()}`} />
-                        {j.name}
-                      </button>
-                    ))}
+                    {journals.length === 0
+                      ? <div className="jem-jnl-option" style={{ opacity: 0.5 }}>Loading journals…</div>
+                      : journals.map(j => (
+                        <button key={j.id} type="button" className="jem-jnl-option"
+                          onMouseDown={() => selectJournal(j)}>
+                          <span className={`jem-jnl-dot jem-jnl-dot--${j.type?.toLowerCase() || 'misc'}`} />
+                          {j.name}
+                        </button>
+                      ))
+                    }
                   </div>
                 )}
                 {errors.journal && <span className="jem-err">{errors.journal}</span>}
                 <p className="jem-field-hint">From Journals (many-to-one)</p>
               </div>
             </div>
+
+            {/* Reference */}
+            <div className="jem-field">
+              <label className="jem-lbl" htmlFor="jem-ref">Reference</label>
+              <div className="jem-input-wrap">
+                <input id="jem-ref" type="text" className="jem-input"
+                  placeholder="e.g. INV-001, PO-003…"
+                  value={form.reference}
+                  onChange={e => setForm(p => ({ ...p, reference: e.target.value }))}
+                />
+              </div>
+            </div>
           </div>
 
-          {/* ── Balance warning ── */}
-          {errors.balance && (
-            <div className="jem-balance-warn" role="alert">
-              ⚠ {errors.balance}
-            </div>
-          )}
-          {balanced && totalDebit > 0 && (
-            <div className="jem-balance-ok" role="status">
-              ✓ Balanced — {fmt(totalDebit)}
-            </div>
-          )}
+          {/* Alerts */}
+          {errors.balance && <div className="jem-balance-warn" role="alert">⚠ {errors.balance}</div>}
+          {balanced && totalDebit > 0 && <div className="jem-balance-ok" role="status">✓ Balanced — {fmt(totalDebit)}</div>}
+          {errors.lines && <div className="jem-balance-warn" role="alert">⚠ {errors.lines}</div>}
+          {saveErr && <div className="jem-balance-warn" role="alert">⚠ {saveErr}</div>}
 
-          {/* ── Line items table ── */}
+          {/* Line items table */}
           <div className="jem-lines-wrap">
             <table className="jem-lines-table" aria-label="Journal entry lines">
               <thead>
@@ -285,121 +428,40 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
                 </tr>
               </thead>
               <tbody>
-                {form.lines.map((line, idx) => {
-                  const acctOpts = COA_OPTIONS.filter(a =>
-                    !acctSearch[idx] ||
-                    a.name.toLowerCase().includes(acctSearch[idx].toLowerCase()) ||
-                    a.code.includes(acctSearch[idx])
-                  )
-                  const contactOpts = CONTACT_OPTIONS.filter(c =>
-                    !contactSearch[idx] || c.toLowerCase().includes((contactSearch[idx]||'').toLowerCase())
-                  )
-
-                  return (
-                    <tr key={idx} className="jem-line-row">
-                      {/* Account */}
-                      <td className="jem-line-td" style={{position:'relative'}}>
-                        <div className="jem-line-acct-wrap">
-                          <input type="text"
-                            className={`jem-line-input${errors[`line-${idx}-account`] ? ' jem-input--err' : ''}`}
-                            placeholder="Search account..."
-                            value={acctSearch[idx] || ''}
-                            onChange={e => {
-                              const s = [...acctSearch]; s[idx] = e.target.value; setAcctSearch(s)
-                              updateLine(idx, 'account', e.target.value)
-                              setAcctDropIdx(idx)
-                            }}
-                            onFocus={() => setAcctDropIdx(idx)}
-                            autoComplete="off"
-                          />
-                          {line.accountCode && (
-                            <span className="jem-acct-code-tag">{line.accountCode}</span>
-                          )}
-                        </div>
-                        {acctDropIdx === idx && acctOpts.length > 0 && (
-                          <div className="jem-line-dropdown">
-                            {acctOpts.map(a => (
-                              <button key={a.code} type="button" className="jem-line-opt"
-                                onMouseDown={() => selectAccount(idx, a)}>
-                                <span className="jem-opt-code">{a.code}</span>
-                                <span className="jem-opt-name">{a.name}</span>
-                                <span className="jem-opt-type">{a.type}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {errors[`line-${idx}-account`] && (
-                          <span className="jem-line-err">{errors[`line-${idx}-account`]}</span>
-                        )}
-                      </td>
-
-                      {/* Partner */}
-                      <td className="jem-line-td" style={{position:'relative'}}>
-                        <input type="text"
-                          className="jem-line-input"
-                          placeholder="Partner..."
-                          value={contactSearch[idx] || ''}
-                          onChange={e => {
-                            const s = [...contactSearch]; s[idx] = e.target.value; setContactSearch(s)
-                            updateLine(idx, 'partner', e.target.value)
-                            setContactDropIdx(idx)
-                          }}
-                          onFocus={() => setContactDropIdx(idx)}
-                          autoComplete="off"
-                        />
-                        {contactDropIdx === idx && contactOpts.length > 0 && (
-                          <div className="jem-line-dropdown">
-                            {contactOpts.map(c => (
-                              <button key={c} type="button" className="jem-line-opt"
-                                onMouseDown={() => selectContact(idx, c)}>
-                                <span className="jem-opt-name">{c}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Debit */}
-                      <td className="jem-line-td">
-                        <input type="number" min="0" step="0.01"
-                          className="jem-line-input jem-line-input--num"
-                          placeholder="0.00"
-                          value={line.debit}
-                          onChange={e => {
-                            updateLine(idx, 'debit', e.target.value)
-                            if (e.target.value) updateLine(idx, 'credit', '')
-                          }}
-                        />
-                      </td>
-
-                      {/* Credit */}
-                      <td className="jem-line-td">
-                        <input type="number" min="0" step="0.01"
-                          className="jem-line-input jem-line-input--num"
-                          placeholder="0.00"
-                          value={line.credit}
-                          onChange={e => {
-                            updateLine(idx, 'credit', e.target.value)
-                            if (e.target.value) updateLine(idx, 'debit', '')
-                          }}
-                        />
-                      </td>
-
-                      {/* Remove */}
-                      <td className="jem-line-td jem-line-td--remove">
-                        {form.lines.length > 2 && (
-                          <button type="button" className="jem-remove-btn"
-                            onClick={() => removeLine(idx)} aria-label="Remove line">
-                            <TrashIcon />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {form.lines.map((line, idx) => (
+                  <LineRow
+                    key={idx}
+                    idx={idx}
+                    line={line}
+                    acctSearch={acctSearch[idx] || ''}
+                    contactSearch={contactSearch[idx] || ''}
+                    acctOpts={filteredAccounts(idx)}
+                    contactOpts={filteredContacts(idx)}
+                    acctOpen={acctDropIdx === idx}
+                    contactOpen={contactDropIdx === idx}
+                    error={errors[`line-${idx}-account`]}
+                    canRemove={form.lines.length > 2}
+                    onAcctChange={(val) => {
+                      const s = [...acctSearch]; s[idx] = val; setAcctSearch(s)
+                      updateLine(idx, 'accountId', ''); updateLine(idx, 'account', val)
+                      setAcctDropIdx(idx)
+                    }}
+                    onAcctFocus={() => setAcctDropIdx(idx)}
+                    onAcctBlur={() => setTimeout(() => setAcctDropIdx(null), 200)}
+                    onAcctSelect={(a) => selectAccount(idx, a)}
+                    onContactChange={(val) => {
+                      const s = [...contactSearch]; s[idx] = val; setContactSearch(s)
+                      updateLine(idx, 'partner', val); setContactDropIdx(idx)
+                    }}
+                    onContactFocus={() => setContactDropIdx(idx)}
+                    onContactBlur={() => setTimeout(() => setContactDropIdx(null), 200)}
+                    onContactSelect={(c) => selectContact(idx, c)}
+                    onDebitChange={(val) => { updateLine(idx, 'debit', val); if (val) updateLine(idx, 'credit', '') }}
+                    onCreditChange={(val) => { updateLine(idx, 'credit', val); if (val) updateLine(idx, 'debit', '') }}
+                    onRemove={() => removeLine(idx)}
+                  />
+                ))}
               </tbody>
-
-              {/* Totals footer */}
               <tfoot>
                 <tr className="jem-totals-row">
                   <td colSpan={2} className="jem-totals-label">Total</td>
@@ -414,21 +476,21 @@ export default function JournalEntryModal({ isOpen, onClose, onSave, editEntry }
               </tfoot>
             </table>
 
-            {/* Add line button */}
             <button type="button" className="jem-add-line-btn" onClick={addLine}>
               <PlusIcon /> Add Line
             </button>
           </div>
 
-          {/* Field explanation note */}
           <div className="jem-field-note">
-            <p><strong>Account</strong> — Selection from Chart of Accounts (many-to-one)</p>
-            <p><strong>Partner</strong> — Selection from Contact master</p>
+            <p><strong>Account</strong> — Selection from live Chart of Accounts</p>
+            <p><strong>Partner</strong> — Selection from live Contact master</p>
+            <p><strong>Draft</strong> — Saves immediately, no balance required. <strong>Post</strong> — Requires Debit = Credit.</p>
           </div>
 
-          {/* Footer */}
           <div className="jem-footer">
-            <button type="submit" className="jem-save-btn">Save as Draft</button>
+            <button type="submit" className="jem-save-btn" disabled={saving}>
+              {saving ? 'Saving…' : 'Save as Draft'}
+            </button>
             <button type="button" className="jem-cancel-btn" onClick={onClose}>Cancel</button>
           </div>
         </form>

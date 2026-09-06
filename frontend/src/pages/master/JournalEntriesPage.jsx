@@ -1,62 +1,73 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import JournalEntryModal from './JournalEntryModal'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './JournalEntriesPage.css'
-
-/* ── Mock data ── */
-const INITIAL_ENTRIES = [
-  {
-    id: 'JE-001',
-    number: 'Bill/2026/0001',
-    date: 'Sep 1, 2026',
-    partner: 'Mr. Rahul',
-    journal: 'Purchase',
-    total: 30000,
-    status: 'Posted',
-    accountingDate: '2026-09-01',
-    journalId: 'JNL-002',
-    lines: [
-      { account: 'Cost of Goods Sold',           accountCode: '4001', partner: 'Mr. Rahul', debit: 30000, credit: 0 },
-      { account: 'Accounts Payable (Creditors)', accountCode: '2001', partner: '',          debit: 0,     credit: 30000 },
-    ]
-  },
-  {
-    id: 'JE-002',
-    number: 'Inv/2026/001',
-    date: 'Sep 2, 2026',
-    partner: 'Mr. Raj',
-    journal: 'Sales',
-    total: 10500,
-    status: 'Draft',
-    accountingDate: '2026-09-02',
-    journalId: 'JNL-001',
-    lines: [
-      { account: 'Accounts Receivable (Debtors)', accountCode: '1003', partner: 'Mr. Raj', debit: 10500, credit: 0 },
-      { account: 'Furniture Sales Income',        accountCode: '3001', partner: '',         debit: 0,     credit: 10500 },
-    ]
-  },
-]
 
 const fmt = (n) => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-let entryCounter = INITIAL_ENTRIES.length + 1
-function nextId() { return `JE-${String(entryCounter++).padStart(3, '0')}` }
+import { api, extractList } from '../../services/api'
 
 export default function JournalEntriesPage() {
-  const [entries,     setEntries]     = useState(INITIAL_ENTRIES)
-  const [search,      setSearch]      = useState('')
-  const [statusFilter,setStatusFilter]= useState('All')
-  const [modalOpen,   setModalOpen]   = useState(false)
-  const [editEntry,   setEditEntry]   = useState(null)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [entries,      setEntries]      = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [search,       setSearch]       = useState('')
+  const [statusFilter, setStatusFilter] = useState('All')
+  const [modalOpen,    setModalOpen]    = useState(false)
+  const [editEntry,    setEditEntry]    = useState(null)
+
+  const loadEntries = useCallback(() => {
+    setLoading(true)
+    api.accounting.getJournalEntries({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(e => {
+          // Determine partner: check line descriptions or fallback to reference / General
+          const linePartners = (e.lines || [])
+            .map(l => l.description)
+            .filter(Boolean)
+          const primaryPartner = linePartners[0] || e.reference || 'General'
+
+          return {
+            ...e,
+            id:      e.id,
+            number:  e.entryNumber || e.id,
+            date:    e.date ? new Date(e.date).toISOString().split('T')[0] : '',
+            partner: primaryPartner,
+            reference: e.reference || '',
+            journal: e.journal?.name || 'General Journal',
+            journalId: e.journalId || e.journal?.id || '',
+            total:   e.lines ? e.lines.reduce((s, l) => s + Number(l.debit || 0), 0) : 0,
+            status:  'Posted',
+            lines:   (e.lines || []).map(l => ({
+              accountId:   l.accountId,
+              account:     l.account?.name || '',
+              accountCode: l.account?.code || '',
+              partner:     l.description || '',
+              debit:       l.debit || 0,
+              credit:      l.credit || 0,
+            })),
+          }
+        })
+        setEntries(mapped)
+      })
+      .catch(err => console.warn('Could not load live journal entries:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { loadEntries() }, [loadEntries])
 
   const filtered = entries.filter(e => {
     const q = search.toLowerCase()
     const matchSearch = !search ||
-      e.number.toLowerCase().includes(q) ||
-      e.partner.toLowerCase().includes(q) ||
-      e.journal.toLowerCase().includes(q) ||
-      e.date.toLowerCase().includes(q)
+      String(e.number).toLowerCase().includes(q) ||
+      String(e.partner).toLowerCase().includes(q) ||
+      String(e.journal).toLowerCase().includes(q) ||
+      String(e.date).toLowerCase().includes(q)
     const matchStatus = statusFilter === 'All' || e.status === statusFilter
     return matchSearch && matchStatus
   })
@@ -68,26 +79,28 @@ export default function JournalEntriesPage() {
   const close    = ()  => { setModalOpen(false); setEditEntry(null) }
 
   const handleSave = (data) => {
-    const totalDebit = data.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0)
-    if (editEntry) {
-      setEntries(prev => prev.map(e =>
-        e.id === editEntry.id ? { ...e, ...data, total: totalDebit } : e
-      ))
-    } else {
-      const id = nextId()
-      const num = `JE/2026/${String(entryCounter - 1).padStart(3, '0')}`
-      setEntries(prev => [...prev, { id, number: num, total: totalDebit, status: 'Draft', ...data }])
-    }
+    loadEntries()
+    toast.success(data?.status === 'Posted' ? 'Journal entry posted successfully!' : 'Journal entry draft saved successfully!')
     close()
   }
 
-  const handlePost = (id) => {
-    setEntries(prev => prev.map(e => e.id === id ? { ...e, status: 'Posted' } : e))
-  }
-
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this journal entry?'))
-      setEntries(prev => prev.filter(e => e.id !== id))
+  const handleDelete = async (id, ref) => {
+    const ok = await confirm({
+      title: 'Delete Journal Entry',
+      message: `Are you sure you want to delete journal entry "${ref || id}"?`,
+      detail: 'This will reverse and remove the debit/credit lines associated with this entry.',
+      confirmText: 'Delete Entry',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      try {
+        await api.accounting.deleteJournalEntry(id)
+        toast.info(`Journal entry ${ref || id} deleted`)
+        loadEntries()
+      } catch (err) {
+        toast.error(err.message || 'Failed to delete journal entry.')
+      }
+    }
   }
 
   return (
@@ -119,7 +132,9 @@ export default function JournalEntriesPage() {
 
         {/* Table */}
         <div className="je-card">
-          {filtered.length === 0
+          {loading
+            ? <div className="je-empty">Loading journal entries…</div>
+            : filtered.length === 0
             ? <div className="je-empty">No journal entries found.</div>
             : (
               <table className="je-table" aria-label="Journal entries">
@@ -145,7 +160,7 @@ export default function JournalEntriesPage() {
                       </td>
                       <td>{entry.partner}</td>
                       <td>
-                        <span className={`je-journal-badge je-journal--${entry.journal.toLowerCase()}`}>
+                        <span className={`je-journal-badge je-journal--${entry.journal.toLowerCase().replace(/\s+/g,'-')}`}>
                           {entry.journal}
                         </span>
                       </td>
@@ -155,11 +170,8 @@ export default function JournalEntriesPage() {
                       </td>
                       <td>
                         <div className="je-actions">
-                          {entry.status === 'Draft' && (
-                            <button className="je-post-btn" onClick={() => handlePost(entry.id)}>Post</button>
-                          )}
                           <button className="je-edit-btn" onClick={() => openEdit(entry)}>Edit</button>
-                          <button className="je-del-btn"  onClick={() => handleDelete(entry.id)}>Delete</button>
+                          <button className="je-del-btn"  onClick={() => handleDelete(entry.id, entry.number || entry.reference)}>Delete</button>
                         </div>
                       </td>
                     </tr>

@@ -5,55 +5,10 @@ import {
 import DashboardLayout from '../../layouts/DashboardLayout'
 import './BudgetReportsPage.css'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 
-/* ── Mock budget report records ── */
-const INITIAL_REPORTS = [
-  {
-    id: 'BR-001',
-    name: 'January 2026',
-    startDate: '01/01/2026',
-    endDate: '31/01/2026',
-    status: 'Confirmed',
-    achieved: 462000,
-    balance: 338000,
-  },
-  {
-    id: 'BR-002',
-    name: 'February 2026',
-    startDate: '01/02/2026',
-    endDate: '28/02/2026',
-    status: 'Confirmed',
-    achieved: 380000,
-    balance: 220000,
-  },
-  {
-    id: 'BR-003',
-    name: 'Q1 2026 – Showroom',
-    startDate: '01/01/2026',
-    endDate: '31/03/2026',
-    status: 'Draft',
-    achieved: 791000,
-    balance: 409000,
-  },
-  {
-    id: 'BR-004',
-    name: 'Marketing Campaign – Sept',
-    startDate: '01/09/2026',
-    endDate: '30/09/2026',
-    status: 'Confirmed',
-    achieved: 110500,
-    balance: 9500,
-  },
-  {
-    id: 'BR-005',
-    name: 'Warehouse Expansion',
-    startDate: '01/04/2026',
-    endDate: '31/03/2027',
-    status: 'Draft',
-    achieved: 450000,
-    balance: 750000,
-  },
-]
+import { api, extractList } from '../../services/api'
 
 const STATUS_STYLES = {
   Confirmed: 'br-status--confirmed',
@@ -64,6 +19,18 @@ const STATUS_STYLES = {
 const PIE_COLORS = ['#4FC3C3', '#E87070']
 
 const fmt = (n) => `₹${Number(n).toLocaleString('en-IN')}`
+
+function getAchievedPercentage(achieved, balance) {
+  const ach = Math.max(0, Number(achieved) || 0)
+  const bal = Math.max(0, Number(balance) || 0)
+  if (bal === 0) return ach > 0 ? '100' : '0'
+  
+  const pct = (ach / bal) * 100
+  if (pct > 0 && pct < 1) {
+    return pct.toFixed(2)
+  }
+  return Math.min(100, Math.round(pct)).toString()
+}
 
 const EMPTY_FORM = {
   name: '', startDate: '', endDate: '', status: 'Draft',
@@ -255,17 +222,23 @@ function PieChartModal({ isOpen, onClose, report }) {
 
   if (!isOpen || !report) return null
 
-  const total    = (report.achieved || 0) + (report.balance || 0)
-  const achPct   = total > 0 ? ((report.achieved / total) * 100).toFixed(1) : 0
-  const balPct   = total > 0 ? ((report.balance  / total) * 100).toFixed(1) : 0
+  const achievedVal  = Math.max(0, Number(report.achieved) || 0)
+  const balanceVal   = Math.max(0, Number(report.balance) || 0)
+  const targetBudget = Math.max(achievedVal, balanceVal)
+  const remainingVal = Math.max(0, targetBudget - achievedVal)
+  const hasData      = targetBudget > 0
+  const achPct       = getAchievedPercentage(report.achieved, report.balance)
+  const balPct       = targetBudget > 0 ? ((remainingVal / targetBudget) * 100).toFixed(1) : '0.0'
 
-  const pieData = [
-    { name: 'Achieved', value: report.achieved || 0 },
-    { name: 'Balance',  value: report.balance  || 0 },
+  const pieData = hasData ? [
+    { name: 'Achieved',  value: achievedVal },
+    { name: 'Remaining', value: remainingVal },
+  ] : [
+    { name: 'No Data',   value: 1 }
   ]
 
   const CustomTooltip = ({ active, payload }) => {
-    if (active && payload?.length) {
+    if (active && payload?.length && hasData) {
       return (
         <div className="pie-tooltip">
           <p className="pie-tooltip-label">{payload[0].name}</p>
@@ -298,14 +271,18 @@ function PieChartModal({ isOpen, onClose, report }) {
                 cx="50%" cy="50%"
                 innerRadius={60}
                 outerRadius={110}
-                paddingAngle={3}
+                paddingAngle={achievedVal > 0 && balanceVal > 0 ? 3 : 0}
                 dataKey="value"
                 startAngle={90}
                 endAngle={-270}
               >
-                {pieData.map((entry, index) => (
-                  <Cell key={index} fill={PIE_COLORS[index]} stroke="none" />
-                ))}
+                {hasData ? (
+                  pieData.map((entry, idx) => (
+                    <Cell key={`pcm-cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} stroke="none" />
+                  ))
+                ) : (
+                  <Cell fill="#E5DEC9" stroke="none" />
+                )}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
               <Legend
@@ -355,16 +332,95 @@ function PieChartModal({ isOpen, onClose, report }) {
 }
 
 /* ── Main Page ── */
-let reportCounter = INITIAL_REPORTS.length + 1
+let reportCounter = 1
 function nextId() { return `BR-${String(reportCounter++).padStart(3,'0')}` }
 
+const STORAGE_KEY_DATA = 'furniq_budget_reports_data'
+const STORAGE_KEY_VIEW = 'furniq_budget_reports_view'
+
 export default function BudgetReportsPage() {
-  const [reports,    setReports]    = useState(INITIAL_REPORTS)
+  const toast        = useToast()
+  const confirm      = useConfirm()
+  const [reports,    setReports]    = useState([])
+  const [loading,    setLoading]    = useState(false)
   const [search,     setSearch]     = useState('')
-  const [view,       setView]       = useState('list')   // 'list' | 'grid'
+  const [view,       setView]       = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_VIEW)
+    return (saved === 'grid' || saved === 'list') ? saved : 'list'
+  })   // 'list' | 'grid'
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editReport, setEditReport] = useState(null)
   const [pieReport,  setPieReport]  = useState(null)
+
+  const handleViewChange = (v) => {
+    setView(v)
+    localStorage.setItem(STORAGE_KEY_VIEW, v)
+  }
+
+  const saveReportsToStorage = (updatedList) => {
+    setReports(updatedList)
+    try {
+      localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updatedList))
+    } catch (e) {
+      console.warn('Could not save budget reports to localStorage:', e)
+    }
+  }
+
+  const loadReports = useCallback(() => {
+    setLoading(true)
+    const cached = localStorage.getItem(STORAGE_KEY_DATA)
+    let localList = []
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localList = parsed.map(item => ({
+            ...item,
+            achieved: Math.abs(Number(item.achieved) || 0),
+            balance: Math.abs(Number(item.balance) || 0),
+          }))
+        }
+      } catch (e) {}
+    }
+
+    api.reports.budget()
+      .then(res => {
+        const rawBudgets = res?.budgets || res?.data?.budgets || []
+        const apiMapped = rawBudgets.map((b, idx) => {
+          const bId = b.budgetId?.slice(0, 8) || `BR-${String(idx + 1).padStart(3, '0')}`
+          const bName = b.budgetName || 'Budget'
+          const localMatch = localList.find(l => l.id === bId || l.name === bName)
+
+          const rawAch = localMatch?.achieved !== undefined ? Number(localMatch.achieved) : Number(b.actualSpent || 0)
+          const rawBal = localMatch?.balance !== undefined ? Number(localMatch.balance) : (b.plannedAmount ? Number(b.plannedAmount) - rawAch : Number(b.variance || 0))
+
+          return {
+            id: bId,
+            name: localMatch?.name || bName,
+            startDate: localMatch?.startDate || (b.period?.startDate ? new Date(b.period.startDate).toLocaleDateString('en-GB') : ''),
+            endDate: localMatch?.endDate || (b.period?.endDate ? new Date(b.period.endDate).toLocaleDateString('en-GB') : ''),
+            status: localMatch?.status || (b.isOverBudget ? 'Draft' : 'Confirmed'),
+            achieved: Math.abs(rawAch),
+            balance: Math.abs(rawBal),
+          }
+        })
+
+        const localExtra = localList.filter(l => !apiMapped.some(m => m.id === l.id || m.name === l.name))
+        const merged = [...apiMapped, ...localExtra]
+        saveReportsToStorage(merged)
+      })
+      .catch(err => {
+        console.warn('Could not load budget report:', err.message)
+        if (localList.length > 0) {
+          setReports(localList)
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadReports()
+  }, [loadReports])
 
   const filtered = reports.filter(r => {
     const q = search.toLowerCase()
@@ -377,22 +433,37 @@ export default function BudgetReportsPage() {
 
   const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
 
-  const openAdd  = ()  => { setEditReport(null); setModalOpen(true) }
+  const openNew  = ()  => { setEditReport(null); setModalOpen(true) }
   const openEdit = (r) => { setEditReport(r);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditReport(null) }
 
   const handleSave = (data) => {
+    let nextList
     if (editReport) {
-      setReports(prev => prev.map(r => r.id === editReport.id ? { ...r, ...data } : r))
+      nextList = reports.map(r => r.id === editReport.id ? { ...r, ...data } : r)
+      toast.success(`Budget report "${data.name}" updated!`)
     } else {
-      setReports(prev => [...prev, { id: nextId(), ...data }])
+      const nid = nextId()
+      nextList = [...reports, { id: nid, ...data }]
+      toast.success(`Budget report "${data.name}" created!`)
     }
+    saveReportsToStorage(nextList)
     close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this budget report?'))
-      setReports(prev => prev.filter(r => r.id !== id))
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Budget Report',
+      message: `Delete budget report #${id}?`,
+      detail: 'This will remove the report snapshot from the system.',
+      confirmText: 'Delete Report',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      const nextList = reports.filter(r => r.id !== id)
+      saveReportsToStorage(nextList)
+      toast.info(`Budget report #${id} deleted`)
+    }
   }
 
   return (
@@ -410,10 +481,10 @@ export default function BudgetReportsPage() {
 
         {/* List card */}
         <div className="br-card">
-          {/* Toolbar: New + Search + Back-style view buttons */}
+          {/* Toolbar: New + Search + View buttons */}
           <div className="br-toolbar">
             <div className="br-toolbar-left">
-              <button className="br-new-btn" onClick={openAdd}>
+              <button className="br-new-btn" onClick={openNew}>
                 <PlusIcon /> New
               </button>
               <div className="br-search-wrap">
@@ -424,8 +495,8 @@ export default function BudgetReportsPage() {
             </div>
             <div className="br-toolbar-right">
               <div className="br-view-icons">
-                <button className={`br-icon-btn${view === 'list' ? ' br-icon-btn--active' : ''}`} title="List view" onClick={() => setView('list')}><ListIcon /></button>
-                <button className={`br-icon-btn${view === 'grid' ? ' br-icon-btn--active' : ''}`} title="Grid view" onClick={() => setView('grid')}><GridIcon /></button>
+                <button className={`br-icon-btn${view === 'list' ? ' br-icon-btn--active' : ''}`} title="List view" onClick={() => handleViewChange('list')}><ListIcon /></button>
+                <button className={`br-icon-btn${view === 'grid' ? ' br-icon-btn--active' : ''}`} title="Card / Grid view" onClick={() => handleViewChange('grid')}><GridIcon /></button>
               </div>
             </div>
           </div>
@@ -477,11 +548,23 @@ export default function BudgetReportsPage() {
                 </table>
               )
               : (
-                /* Grid view */
+                /* Grid / Card view */
                 <div className="br-grid">
                   {paged.map(r => {
-                    const total  = (r.achieved || 0) + (r.balance || 0)
-                    const achPct = total > 0 ? Math.round((r.achieved / total) * 100) : 0
+                    const achievedVal  = Math.max(0, Number(r.achieved) || 0)
+                    const balanceVal   = Math.max(0, Number(r.balance) || 0)
+                    const targetBudget = Math.max(achievedVal, balanceVal)
+                    const remainingVal = Math.max(0, targetBudget - achievedVal)
+                    const achPct       = getAchievedPercentage(r.achieved, r.balance)
+                    const hasData      = targetBudget > 0
+
+                    const pieData = hasData ? [
+                      { name: 'Achieved',  value: achievedVal },
+                      { name: 'Remaining', value: remainingVal },
+                    ] : [
+                      { name: 'No Data',   value: 1 }
+                    ]
+
                     return (
                       <div key={r.id} className="br-grid-card">
                         {/* Card header */}
@@ -497,15 +580,26 @@ export default function BudgetReportsPage() {
                         <div className="br-gc-chart">
                           <ResponsiveContainer width="100%" height={120}>
                             <PieChart>
-                              <Pie data={[
-                                { name: 'Achieved', value: r.achieved || 0 },
-                                { name: 'Balance',  value: r.balance  || 0 },
-                              ]} cx="50%" cy="50%" innerRadius={32} outerRadius={50}
-                                paddingAngle={3} dataKey="value" startAngle={90} endAngle={-270}>
-                                <Cell fill={PIE_COLORS[0]} stroke="none" />
-                                <Cell fill={PIE_COLORS[1]} stroke="none" />
+                              <Pie
+                                data={pieData}
+                                cx="50%" cy="50%"
+                                innerRadius={32} outerRadius={50}
+                                paddingAngle={achievedVal > 0 && balanceVal > 0 ? 3 : 0}
+                                dataKey="value"
+                                startAngle={90} endAngle={-270}
+                              >
+                                {hasData ? (
+                                  pieData.map((entry, idx) => (
+                                    <Cell key={`gc-cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} stroke="none" />
+                                  ))
+                                ) : (
+                                  <Cell fill="#E5DEC9" stroke="none" />
+                                )}
                               </Pie>
-                              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontSize: 11, borderRadius: 4, border: '1px solid #D4C4A0', background: '#FDFAF5' }} />
+                              <Tooltip
+                                formatter={(v) => hasData ? fmt(v) : '₹0'}
+                                contentStyle={{ fontSize: 11, borderRadius: 4, border: '1px solid #D4C4A0', background: '#FDFAF5' }}
+                              />
                             </PieChart>
                           </ResponsiveContainer>
                           <div className="br-gc-pct">{achPct}%<span>achieved</span></div>

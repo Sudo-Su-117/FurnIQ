@@ -157,6 +157,87 @@
 .footer-links a { color: var(--primary); font-weight: 500; }
 .footer-links a:hover { color: var(--primary-dark); text-decoration: underline; }
 
+/* Quick Demo Logins */
+.quick-login-section {
+  margin-top: 12px;
+  margin-bottom: 20px;
+  padding: 14px 14px 10px;
+  background: #FAF7F2;
+  border: 1px dashed #D5C8B5;
+  border-radius: var(--radius-md);
+}
+.quick-login-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--primary-dark);
+  margin-bottom: 10px;
+  text-align: center;
+}
+.quick-login-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.quick-login-btn {
+  background: #FFFFFF;
+  border: 1px solid #E2D7C7;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: all 0.15s ease;
+}
+.quick-login-btn:hover {
+  border-color: var(--primary);
+  background: #FFFDF9;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(166, 124, 61, 0.15);
+}
+.ql-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.ql-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2D2319;
+}
+.ql-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #F0E8DC;
+  color: #7A5832;
+}
+.ql-email {
+  font-size: 10px;
+  color: #8C7B6B;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-login-hint {
+  font-size: 11px;
+  color: #8C7B6B;
+  text-align: center;
+  margin-top: 8px;
+}
+.quick-login-hint code {
+  background: #EFE9DE;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  color: #593D22;
+}
+
 /* Role info */
 .role-info {
   font-size: 12px;

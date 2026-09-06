@@ -260,11 +260,28 @@
   background: var(--primary);
   color: #fff;
 }
+.cp-delete-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  color: #c93b2b;
+  background: rgba(201, 59, 43, 0.07);
+  border: 1px solid rgba(201, 59, 43, 0.35);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cp-delete-btn:hover {
+  background: #c93b2b;
+  color: #ffffff;
+  border-color: #c93b2b;
+}
 .cp-archive-btn {
   font-size: 12px;
   font-weight: 500;
   font-family: var(--font-body);
-  color: var(--error);
+  color: #8c6d46;
   background: transparent;
   border: none;
   cursor: pointer;

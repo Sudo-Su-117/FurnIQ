@@ -23,11 +23,17 @@ import SalesOrdersPage from './pages/data/SalesOrdersPage'
 import CustomerInvoicesPage from './pages/data/CustomerInvoicesPage'
 import InvoicePaymentsPage from './pages/data/InvoicePaymentsPage'
 import CustomerPortalPage from './pages/portal/CustomerPortalPage'
+import { AuthProvider } from './context/AuthContext'
+import { ToastProvider } from './context/ToastContext'
+import { ConfirmProvider } from './context/ConfirmContext'
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <AuthProvider>
+      <ToastProvider>
+        <ConfirmProvider>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
         {/* Auth */}
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
@@ -75,7 +81,10 @@ function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
-  )
+    </ConfirmProvider>
+    </ToastProvider>
+  </AuthProvider>
+)
 }
 
 export default App

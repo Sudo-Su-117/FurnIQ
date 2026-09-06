@@ -1,94 +1,159 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewAccountModal from './NewAccountModal'
 import Pagination, { usePagination } from '../../components/Pagination'
 import './ChartOfAccountsPage.css'
 
-/* ─── Pre-configured accounts ─── */
-const INITIAL_ACCOUNTS = [
-  /* ASSET */
-  { code: '1001', name: 'HDFC Bank – Current Account', group: 'ASSET',     type: 'Bank',           status: 'Asset'    },
-  { code: '1002', name: 'Petty Cash',                  group: 'ASSET',     type: 'Cash',           status: 'Asset'    },
-  { code: '1003', name: 'Accounts Receivable (Debtors)',group: 'ASSET',     type: 'Asset',          status: 'Asset'    },
-  { code: '1004', name: 'Inventory – Furniture',       group: 'ASSET',     type: 'Asset',          status: 'Asset'    },
-  { code: '1005', name: 'Workshop Equipment',          group: 'ASSET',     type: 'Asset',          status: 'Asset'    },
-  /* LIABILITY */
-  { code: '2001', name: 'Accounts Payable (Creditors)',group: 'LIABILITY', type: 'Liability',      status: 'Liability'},
-  { code: '2002', name: 'GST Payable',                 group: 'LIABILITY', type: 'Liability',      status: 'Liability'},
-  { code: '2003', name: 'Short-term Loan – HDFC',      group: 'LIABILITY', type: 'Liability',      status: 'Liability'},
-  /* INCOME */
-  { code: '3001', name: 'Furniture Sales Income',      group: 'INCOME',    type: 'Income',         status: 'Income'   },
-  { code: '3002', name: 'Service Revenue',             group: 'INCOME',    type: 'Income',         status: 'Income'   },
-  /* EXPENSE */
-  { code: '4001', name: 'Cost of Goods Sold',          group: 'EXPENSE',   type: 'Expenses',       status: 'Expense'  },
-  { code: '4002', name: 'Workshop Rent',               group: 'EXPENSE',   type: 'Expenses',       status: 'Expense'  },
-  { code: '4003', name: 'Salaries & Wages',            group: 'EXPENSE',   type: 'Expenses',       status: 'Expense'  },
-  { code: '4004', name: 'Utilities & Power',           group: 'EXPENSE',   type: 'Other Expenses', status: 'Expense'  },
-  { code: '4005', name: 'Marketing & Advertising',     group: 'EXPENSE',   type: 'Other Expenses', status: 'Expense'  },
-  /* CAPITAL */
-  { code: '5001', name: "Owner's Capital",             group: 'CAPITAL',   type: 'Capital',        status: 'Capital'  },
-  { code: '5002', name: 'Retained Earnings',           group: 'CAPITAL',   type: 'Capital',        status: 'Capital'  },
-]
+import { api, extractList } from '../../services/api'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 
 const GROUP_ORDER = ['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE', 'CAPITAL']
 
-/* Next code per group prefix */
-const GROUP_PREFIX = { ASSET: '1', LIABILITY: '2', INCOME: '3', EXPENSE: '4', CAPITAL: '5' }
-function nextCode(group, accounts) {
-  const prefix = GROUP_PREFIX[group] || '9'
-  const nums = accounts
-    .filter(a => a.group === group)
+const GROUP_LABELS = {
+  ASSET: 'Assets',
+  LIABILITY: 'Liabilities',
+  INCOME: 'Income & Revenue',
+  EXPENSE: 'Operating Expenses',
+  CAPITAL: 'Equity & Capital',
+}
+
+const GROUP_DESCRIPTIONS = {
+  ASSET: 'Resources owned, cash, bank accounts, inventory, and receivables',
+  LIABILITY: 'Obligations, accounts payable, GST payables, and borrowings',
+  INCOME: 'Operating revenue from sales, installations, and turnkey projects',
+  EXPENSE: 'Purchases, workshop rent, salaries, utilities, and logistics',
+  CAPITAL: 'Shareholder equity, promoter funds, and retained reserves',
+}
+
+function nextCode(group, accounts = []) {
+  const baseMap = { ASSET: 1000, LIABILITY: 2000, CAPITAL: 3000, INCOME: 4000, EXPENSE: 5000 }
+  const base = baseMap[group] || 1000
+  const groupCodes = accounts
+    .filter(a => (a.group || a.type) === group)
     .map(a => parseInt(a.code, 10))
-    .filter(n => !isNaN(n))
-  const next = nums.length ? Math.max(...nums) + 1 : parseInt(prefix + '001', 10)
-  return String(next)
+    .filter(n => !isNaN(n) && n >= base && n < base + 1000)
+  const max = groupCodes.length ? Math.max(...groupCodes) : base
+  return String(max + 1)
 }
 
 export default function ChartOfAccountsPage() {
-  const [accounts, setAccounts]     = useState(INITIAL_ACCOUNTS)
-  const [search,   setSearch]       = useState('')
-  const [modalOpen, setModalOpen]   = useState(false)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [accounts, setAccounts]       = useState([])
+  const [loading,  setLoading]        = useState(true)
+  const [search,   setSearch]         = useState('')
+  const [selectedTab, setSelectedTab] = useState('ALL')
+  const [modalOpen, setModalOpen]     = useState(false)
   const [editAccount, setEditAccount] = useState(null)
 
-  /* filter */
+  const loadAccounts = React.useCallback(() => {
+    setLoading(true)
+    api.accounting.getAccounts()
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(a => ({
+          ...a,
+          group: a.group || a.type || 'ASSET',
+          code: a.code || String(a.id),
+        }))
+        setAccounts(mapped)
+      })
+      .catch(err => console.warn('Could not load live COA:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadAccounts()
+  }, [loadAccounts])
+
+  /* filter by search query */
   const q = search.toLowerCase()
   const filtered = accounts.filter(a =>
     !search ||
     a.name.toLowerCase().includes(q) ||
     a.code.includes(q) ||
-    a.type.toLowerCase().includes(q) ||
-    a.group.toLowerCase().includes(q)
+    (a.type && a.type.toLowerCase().includes(q)) ||
+    (a.group && a.group.toLowerCase().includes(q))
   )
 
-  /* group filtered rows */
-  const grouped = GROUP_ORDER.reduce((acc, g) => {
-    const rows = filtered.filter(a => a.group === g)
-    if (rows.length) acc[g] = rows
+  /* Group counts */
+  const counts = GROUP_ORDER.reduce((acc, g) => {
+    acc[g] = accounts.filter(a => (a.group || a.type) === g).length
     return acc
   }, {})
 
-  const { page, setPage } = usePagination(filtered, 20)
+  /* Group rows for rendering */
+  const activeGroups = selectedTab === 'ALL'
+    ? GROUP_ORDER
+    : GROUP_ORDER.filter(g => g === selectedTab)
+
+  const grouped = activeGroups.reduce((acc, g) => {
+    const rows = filtered.filter(a => (a.group || a.type) === g)
+    if (rows.length > 0 || !search) acc[g] = rows
+    return acc
+  }, {})
+
+  const { page, setPage } = usePagination(filtered, 25)
 
   const openAdd  = ()  => { setEditAccount(null); setModalOpen(true) }
   const openEdit = (a) => { setEditAccount(a);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false);  setEditAccount(null) }
 
-  const handleSave = (data) => {
-    if (editAccount) {
-      setAccounts(prev => prev.map(a => a.code === editAccount.code ? { ...a, ...data } : a))
-    } else {
-      const code = nextCode(data.group, accounts)
-      setAccounts(prev => [...prev, { code, ...data }])
+  const handleSave = async (data) => {
+    try {
+      if (editAccount?.id) {
+        await api.accounting.updateAccount(editAccount.id, {
+          name: data.name,
+          code: data.code || editAccount.code,
+          type: data.group || data.type,
+        })
+        toast.success(`Account ${editAccount.code} - ${data.name} updated successfully!`)
+      } else {
+        const code = nextCode(data.group, accounts)
+        await api.accounting.createAccount({
+          name: data.name,
+          code,
+          type: data.group || data.type,
+        })
+        toast.success(`Account ${code} - ${data.name} created successfully in Database!`)
+      }
+      loadAccounts()
+    } catch (err) {
+      console.warn('API error saving account:', err.message)
+      if (editAccount) {
+        setAccounts(prev => prev.map(a => a.code === editAccount.code ? { ...a, ...data } : a))
+        toast.success(`Account ${editAccount.code} - ${data.name} updated!`)
+      } else {
+        const code = nextCode(data.group, accounts)
+        setAccounts(prev => [...prev, { code, ...data }])
+        toast.success(`Account ${code} - ${data.name} created!`)
+      }
     }
     close()
   }
 
-  const handleArchive = (code) => {
-    if (window.confirm('Archive this account?'))
+  const handleArchive = async (code, name) => {
+    const acc = accounts.find(a => a.code === code)
+    const ok = await confirm({
+      title: 'Archive General Ledger Account',
+      message: `Archive account ${code}${name ? ` - ${name}` : ''}?`,
+      detail: 'This account will be archived from new postings. Historical journal entries will remain unchanged.',
+      confirmText: 'Archive Account',
+      confirmVariant: 'warning',
+    })
+    if (ok) {
+      if (acc?.id) {
+        try {
+          await api.accounting.deleteAccount(acc.id)
+        } catch (e) {
+          console.warn('API delete account error:', e.message)
+        }
+      }
       setAccounts(prev => prev.filter(a => a.code !== code))
+      toast.info(`Account ${code} archived`)
+    }
   }
-
-  const totalCount = accounts.length
 
   return (
     <DashboardLayout>
@@ -100,13 +165,19 @@ export default function ChartOfAccountsPage() {
         <div className="coa-header">
           <div>
             <h1 className="coa-title">Chart of Accounts</h1>
-            <p className="coa-subtitle">{totalCount} accounts in {GROUP_ORDER.length} types</p>
+            <p className="coa-subtitle">{accounts.length} general ledger accounts organized across standard financial statements</p>
           </div>
           <div className="coa-header-right">
             <div className="coa-search-wrap">
               <SearchIcon />
-              <input className="coa-search" type="search" placeholder="Search accounts..."
-                value={search} onChange={e => setSearch(e.target.value)} aria-label="Search accounts" />
+              <input
+                className="coa-search"
+                type="search"
+                placeholder="Search accounts or code..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                aria-label="Search accounts"
+              />
             </div>
             <button className="coa-add-btn" onClick={openAdd}>
               <PlusIcon /> Add Account
@@ -114,54 +185,124 @@ export default function ChartOfAccountsPage() {
           </div>
         </div>
 
-        {/* ── Grouped table ── */}
-        <div className="coa-card">
-          {Object.keys(grouped).length === 0
-            ? <div className="coa-empty">No accounts found.</div>
-            : Object.entries(grouped).map(([group, rows]) => (
-              <div key={group} className={`coa-group coa-group--${group.toLowerCase()}`}>
-                {/* Group header */}
-                <div className="coa-group-header">
-                  <span className="coa-group-label">{group}</span>
-                  <span className="coa-group-count">{rows.length}</span>
-                </div>
-
-                {/* Rows */}
-                {rows.map((acc, i) => (
-                  <div key={acc.code}
-                    className={`coa-row${i % 2 === 1 ? ' coa-row--alt' : ''}`}>
-                    <div className="coa-row-left">
-                      <span className="coa-code">{acc.code}</span>
-                      <span className="coa-name">{acc.name}</span>
-                    </div>
-                    <div className="coa-row-right">
-                      <span className={`coa-type-badge coa-type--${acc.type.toLowerCase().replace(/\s+/g,'-')}`}>
-                        {acc.type}
-                      </span>
-                      <button className="coa-edit-btn" onClick={() => openEdit(acc)}>Edit</button>
-                      <button className="coa-archive-btn" onClick={() => handleArchive(acc.code)}>Archive</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))
-          }
+        {/* Filter Tabs / KPI Bar */}
+        <div className="coa-tabs-bar">
+          <button
+            className={`coa-tab ${selectedTab === 'ALL' ? 'coa-tab--active' : ''}`}
+            onClick={() => setSelectedTab('ALL')}
+          >
+            All Accounts <span className="coa-tab-count">{accounts.length}</span>
+          </button>
+          {GROUP_ORDER.map(g => (
+            <button
+              key={g}
+              className={`coa-tab coa-tab--${g.toLowerCase()} ${selectedTab === g ? 'coa-tab--active' : ''}`}
+              onClick={() => setSelectedTab(g)}
+            >
+              {GROUP_LABELS[g] || g} <span className="coa-tab-count">{counts[g] || 0}</span>
+            </button>
+          ))}
         </div>
 
-        <Pagination total={filtered.length} page={page} pageSize={20} onChange={setPage} />
+        {/* Account Groups List (Clean separated cards with breathing room) */}
+        <div className="coa-content-area">
+          {loading ? (
+            <div className="coa-empty">Loading Chart of Accounts...</div>
+          ) : Object.keys(grouped).length === 0 ? (
+            <div className="coa-empty">No accounts match your search query.</div>
+          ) : (
+            Object.entries(grouped).map(([group, rows]) => (
+              <div key={group} className={`coa-group-card coa-group-card--${group.toLowerCase()}`}>
+                {/* Group Card Header */}
+                <div className="coa-group-header">
+                  <div className="coa-group-header-left">
+                    <span className="coa-group-tag">{group}</span>
+                    <h2 className="coa-group-heading">{GROUP_LABELS[group] || group}</h2>
+                    <span className="coa-group-count-pill">{rows.length} {rows.length === 1 ? 'account' : 'accounts'}</span>
+                  </div>
+                  <span className="coa-group-desc">{GROUP_DESCRIPTIONS[group]}</span>
+                </div>
+
+                {/* Structured Table */}
+                <div className="coa-table-wrap">
+                  <table className="coa-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '12%' }}>Code</th>
+                        <th style={{ width: '46%' }}>Account Name</th>
+                        <th style={{ width: '18%' }}>Category</th>
+                        <th style={{ width: '12%' }}>Status</th>
+                        <th style={{ width: '12%', textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" className="coa-no-match">No {group.toLowerCase()} accounts found</td>
+                        </tr>
+                      ) : (
+                        rows.map((acc, i) => (
+                          <tr key={acc.code} className={`coa-tr ${i % 2 === 1 ? 'coa-tr--alt' : ''}`}>
+                            <td className="coa-td-code">
+                              <span className="coa-code-badge">{acc.code}</span>
+                            </td>
+                            <td className="coa-td-name">
+                              <span className="coa-name-text">{acc.name}</span>
+                            </td>
+                            <td className="coa-td-type">
+                              <span className={`coa-type-badge coa-type--${(acc.type || group).toLowerCase().replace(/\s+/g, '-')}`}>
+                                {acc.type || group}
+                              </span>
+                            </td>
+                            <td className="coa-td-status">
+                              <span className="coa-status-pill">
+                                <span className="coa-status-dot" /> Active
+                              </span>
+                            </td>
+                            <td className="coa-td-actions">
+                              <button className="coa-edit-btn" onClick={() => openEdit(acc)}>Edit</button>
+                              <button className="coa-archive-btn" onClick={() => handleArchive(acc.code, acc.name)}>Archive</button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="coa-footer-count">
+          Showing {filtered.length} of {accounts.length} total accounts
+        </div>
       </div>
 
       <NewAccountModal
-        isOpen={modalOpen} onClose={close}
-        onSave={handleSave} editAccount={editAccount}
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        editAccount={editAccount}
       />
     </DashboardLayout>
   )
 }
 
 function SearchIcon() {
-  return <svg className="coa-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  return (
+    <svg className="coa-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
 }
+
 function PlusIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  )
 }

@@ -1,53 +1,62 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewContactModal from './NewContactModal'
 import Pagination, { usePagination } from '../../components/Pagination'
 import './ContactsPage.css'
 
-const INITIAL_CONTACTS = [
-  { id: 'CUST-001', name: 'Ratan Mehra',        type: 'CUSTOMER', email: 'ratan.mehra@gmail.com',        mobile: '+91 98200 34512',  city: 'Mumbai',  state: 'Maharashtra', pincode: '400001', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-  { id: 'VEND-001', name: 'Godrej Interio Ltd.', type: 'VENDOR',   email: 'orders@godrejinterio.com',     mobile: '+91 22 6796 1000', city: 'Mumbai',  state: 'Maharashtra', pincode: '400001', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-  { id: 'CUST-002', name: 'Ananya Sharma',       type: 'BOTH',     email: 'ananya.sharma@outlook.com',    mobile: '+91 97695 21340',  city: 'Pune',    state: 'Maharashtra', pincode: '411001', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-  { id: 'VEND-003', name: 'Ramesh Timber Works', type: 'VENDOR',   email: 'ramesh@timberworks.in',        mobile: '+91 94220 87654',  city: 'Nagpur',  state: 'Maharashtra', pincode: '440001', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-  { id: 'CUST-003', name: 'Priya Kapoor',        type: 'CUSTOMER', email: 'priya.kapoor@hotmail.com',     mobile: '+91 98330 11290',  city: 'Delhi',   state: 'Delhi',       pincode: '110001', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-  { id: 'CUST-004', name: 'Mahindra Living',     type: 'CUSTOMER', email: 'contact@mahindraliving.com',   mobile: '+91 22 6600 0000', city: 'Mumbai',  state: 'Maharashtra', pincode: '400051', street: '',  country: 'India', address: '', status: 'ACTIVE' },
-]
-
-function generateId(type, contacts) {
-  const prefix = type === 'VENDOR' ? 'VEND' : 'CUST'
-  const existing = contacts
-    .filter(c => c.id.startsWith(prefix))
-    .map(c => parseInt(c.id.replace(prefix + '-', ''), 10))
-    .filter(n => !isNaN(n))
-  const next = existing.length > 0 ? Math.max(...existing) + 1 : 1
-  return `${prefix}-${String(next).padStart(3, '0')}`
-}
-
 const TYPE_OPTIONS = ['All', 'Customer', 'Vendor', 'Both']
 
 /* Avatar background colors per letter */
 const AVATAR_COLORS = ['#A67C3D','#5A8C6A','#7B6E5A','#1A6FA8','#8B3D3D','#3D6A8B','#6A3D8B']
-function avatarColor(name) {
-  const i = name.charCodeAt(0) % AVATAR_COLORS.length
+function avatarColor(name = 'C') {
+  const i = (name || 'C').charCodeAt(0) % AVATAR_COLORS.length
   return AVATAR_COLORS[i]
 }
 
+import { api, extractList } from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
+
 export default function ContactsPage() {
-  const [contacts, setContacts]     = useState(INITIAL_CONTACTS)
+  const { role } = useAuth()
+  const toast = useToast()
+  const confirm = useConfirm()
+  const isAdmin = role === 'ADMIN'
+  const [contacts, setContacts]     = useState([])
+  const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState('All')
   const [modalOpen, setModalOpen]   = useState(false)
   const [editContact, setEditContact] = useState(null)
   const [view, setView]             = useState('list') // 'list' | 'card'
 
+  const loadContacts = useCallback(() => {
+    setLoading(true)
+    api.contacts.list({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        setContacts(list.map(c => ({
+          ...c,
+          imagePreview: c.profileImage || c.imagePreview || null,
+        })))
+      })
+      .catch(err => console.warn('Could not load live contacts:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadContacts()
+  }, [loadContacts])
+
   const filtered = contacts.filter(c => {
     const q = search.toLowerCase()
     const matchSearch = !search ||
-      c.name.toLowerCase().includes(q) ||
-      c.email.toLowerCase().includes(q) ||
-      c.mobile.includes(q) ||
-      c.city.toLowerCase().includes(q) ||
-      c.id.toLowerCase().includes(q)
+      c.name?.toLowerCase().includes(q) ||
+      c.email?.toLowerCase().includes(q) ||
+      c.mobile?.includes(q) ||
+      c.city?.toLowerCase().includes(q) ||
+      c.id?.toLowerCase().includes(q)
     const matchType = typeFilter === 'All' || c.type === typeFilter.toUpperCase()
     return matchSearch && matchType
   })
@@ -58,19 +67,72 @@ export default function ContactsPage() {
   const openEditModal = (c)  => { setEditContact(c);  setModalOpen(true) }
   const closeModal    = () => { setModalOpen(false); setEditContact(null) }
 
-  const handleSave = (formData) => {
-    if (editContact) {
-      setContacts(prev => prev.map(c => c.id === editContact.id ? { ...c, ...formData } : c))
-    } else {
-      const newId = generateId(formData.type, contacts)
-      setContacts(prev => [...prev, { id: newId, status: 'ACTIVE', ...formData }])
+  const handleSave = async (formData) => {
+    const payload = {
+      name: formData.name.trim(),
+      type: formData.type,
+      ...(formData.email?.trim() ? { email: formData.email.trim() } : {}),
+      ...(formData.mobile?.trim() ? { mobile: formData.mobile.trim() } : {}),
+      ...(formData.city?.trim() ? { city: formData.city.trim() } : {}),
+      ...(formData.state?.trim() ? { state: formData.state.trim() } : {}),
+      ...(formData.pincode?.trim() ? { pincode: formData.pincode.trim() } : {}),
+      profileImage: formData.imagePreview || formData.profileImage || null,
     }
-    closeModal()
+
+    try {
+      if (editContact) {
+        await api.contacts.update(editContact.id, payload)
+        toast.success(`Contact "${payload.name}" updated successfully!`)
+      } else {
+        await api.contacts.create(payload)
+        toast.success(`Contact "${payload.name}" created successfully!`)
+      }
+      loadContacts()
+      closeModal()
+    } catch (err) {
+      console.error('Error saving contact to database:', err.message)
+      toast.error(`Failed to save contact: ${err.message}`)
+    }
   }
 
-  const handleArchive = (id) => {
-    if (window.confirm('Archive this contact?')) {
-      setContacts(prev => prev.filter(c => c.id !== id))
+  const handleArchive = async (id, name) => {
+    const ok = await confirm({
+      title: 'Archive Contact',
+      message: `Archive contact "${name || 'this contact'}"?`,
+      detail: 'This contact will be hidden from the active directory, but linked invoices, bills, and orders will remain intact.',
+      confirmText: 'Archive',
+      confirmVariant: 'warning',
+    })
+    if (ok) {
+      try {
+        await api.contacts.archive(id)
+        toast.info('Contact archived')
+        loadContacts()
+      } catch (err) {
+        console.error('Error archiving contact:', err.message)
+        setContacts(prev => prev.filter(c => c.id !== id))
+        toast.info('Contact archived')
+      }
+    }
+  }
+
+  const handleDelete = async (id, name) => {
+    const ok = await confirm({
+      title: 'Permanently Delete Contact',
+      message: `Permanently delete contact "${name}"?`,
+      detail: 'This will remove the contact and cleanly remove any associated transaction references.',
+      confirmText: 'Delete Contact',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      try {
+        await api.contacts.delete(id)
+        toast.info(`Contact "${name}" deleted permanently`)
+        loadContacts()
+      } catch (err) {
+        console.error('Error deleting contact:', err.message)
+        toast.error(`Failed to delete contact: ${err.message}`)
+      }
     }
   }
 
@@ -143,14 +205,13 @@ export default function ContactsPage() {
                         <div className="cp-name-cell">
                           <div className="cp-avatar" style={{ background: avatarColor(contact.name) }}
                             aria-hidden="true">
-                            {contact.imagePreview
-                              ? <img src={contact.imagePreview} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
+                            {(contact.imagePreview || contact.profileImage)
+                              ? <img src={contact.imagePreview || contact.profileImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
                               : contact.name.charAt(0).toUpperCase()
                             }
                           </div>
                           <div>
                             <div className="cp-name-text">{contact.name}</div>
-                            <div className="cp-name-id">{contact.id}</div>
                           </div>
                         </div>
                       </td>
@@ -164,7 +225,12 @@ export default function ContactsPage() {
                       <td>
                         <div className="cp-actions">
                           <button className="cp-edit-btn" onClick={() => openEditModal(contact)}>Edit</button>
-                          <button className="cp-archive-btn" onClick={() => handleArchive(contact.id)}>Archive</button>
+                          {isAdmin && (
+                            <>
+                              <button className="cp-delete-btn" onClick={() => handleDelete(contact.id, contact.name)}>Delete</button>
+                              <button className="cp-archive-btn" onClick={() => handleArchive(contact.id, contact.name)}>Archive</button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -188,14 +254,13 @@ export default function ContactsPage() {
                     {/* Card header: avatar + name */}
                     <div className="ccc-header">
                       <div className="ccc-avatar" style={{ background: avatarColor(contact.name) }}>
-                        {contact.imagePreview
-                          ? <img src={contact.imagePreview} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
+                        {(contact.imagePreview || contact.profileImage)
+                          ? <img src={contact.imagePreview || contact.profileImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
                           : contact.name.charAt(0).toUpperCase()
                         }
                       </div>
                       <div className="ccc-name-wrap">
                         <span className="ccc-name">{contact.name}</span>
-                        <span className="ccc-id">{contact.id}</span>
                       </div>
                       <TypeBadge type={contact.type} />
                     </div>
@@ -224,7 +289,12 @@ export default function ContactsPage() {
                       <span className="cp-status-badge">{contact.status}</span>
                       <div className="cp-actions">
                         <button className="cp-edit-btn" onClick={() => openEditModal(contact)}>Edit</button>
-                        <button className="cp-archive-btn" onClick={() => handleArchive(contact.id)}>Archive</button>
+                        {isAdmin && (
+                          <>
+                            <button className="cp-delete-btn" onClick={() => handleDelete(contact.id, contact.name)}>Delete</button>
+                            <button className="cp-archive-btn" onClick={() => handleArchive(contact.id, contact.name)}>Archive</button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

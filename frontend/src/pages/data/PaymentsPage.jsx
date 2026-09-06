@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './DataForms.css'
 
 const PARTNERS = ['Timber World', 'Steel Hub', 'Fabric Co.', 'Godrej Interio Ltd.', 'Ratan Mehra', 'Priya Kapoor', 'Ananya Sharma']
@@ -13,29 +15,77 @@ const ACCOUNTS = [
 const STATUS_STYLE = { Draft: 'df-badge--draft', Posted: 'df-badge--confirmed' }
 const fmtINR = (n) => `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-const INITIAL_PAYMENTS = [
-  { id: 'PAY-001', paymentType: 'Send',    partner: 'Timber World', amount: 73160, account: 'HDFC Bank – Current Account', accountCode: '1001', journal: 'Bank', memo: 'Payment for PO-001', status: 'Posted' },
-  { id: 'PAY-002', paymentType: 'Send',    partner: 'Steel Hub',    amount: 45430, account: 'Petty Cash',                  accountCode: '1002', journal: 'Cash', memo: 'Payment for PO-002', status: 'Draft'  },
-]
+const EMPTY_PAYMENT = { paymentType: 'Send', partner: '', partnerId: '', vendorBillId: '', amount: '', account: 'State Bank of India – Current A/c', accountCode: '1002', journal: 'Bank', memo: '' }
 
-const EMPTY_PAYMENT = { paymentType: 'Send', partner: '', amount: '', account: '', accountCode: '', journal: '', memo: '' }
-
-let payCounter = INITIAL_PAYMENTS.length + 1
-function nextPayId() { return `PAY-${String(payCounter++).padStart(3,'0')}` }
+import { api, extractList } from '../../services/api'
 
 export default function PaymentsPage() {
   const location = useLocation()
-  const [payments,  setPayments]  = useState(INITIAL_PAYMENTS)
+  const toast    = useToast()
+  const confirm  = useConfirm()
+  const [payments,  setPayments]  = useState([])
+  const [partners,  setPartners]  = useState([])
+  const [accounts,  setAccounts]  = useState([])
+  const [bills,     setBills]     = useState([])
+  const [loading,   setLoading]   = useState(false)
   const [search,    setSearch]    = useState('')
   const [statusFlt, setStatusFlt] = useState('All')
   const [modalOpen, setModalOpen] = useState(false)
   const [editPay,   setEditPay]   = useState(null)
 
+  const loadPayments = useCallback(() => {
+    setLoading(true)
+    api.payments.list({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const vendorPayments = list.filter(p => p.type === 'VENDOR_PAYMENT' || !p.type)
+        const mapped = vendorPayments.map(p => ({
+          ...p,
+          id: p.paymentNumber || p.id,
+          rawId: p.id,
+          paymentType: 'Send',
+          partner: p.vendorBill?.vendor?.name || 'Vendor',
+          amount: Number(p.amount || 0),
+          account: p.paymentMethod === 'CASH' ? 'Petty Cash' : 'State Bank of India – Current A/c',
+          accountCode: p.paymentMethod === 'CASH' ? '1001' : '1002',
+          journal: p.paymentMethod === 'CASH' ? 'Cash' : 'Bank',
+          status: 'Posted',
+        }))
+        setPayments(mapped)
+      })
+      .catch(err => console.warn('Could not load payments:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadPayments()
+    api.contacts.list({ limit: 100 }).then(res => {
+      setPartners(extractList(res))
+    }).catch(e => console.warn('Failed to load contacts:', e.message))
+
+    api.accounting.getAccounts().then(res => {
+      setAccounts(extractList(res))
+    }).catch(e => console.warn('Failed to load accounts:', e.message))
+
+    api.purchases.listBills({ limit: 100 }).then(res => {
+      setBills(extractList(res))
+    }).catch(e => console.warn('Failed to load bills:', e.message))
+  }, [loadPayments])
+
   // Pre-fill from Vendor Bill navigation
   useEffect(() => {
     if (location.state?.fromBill) {
       const b = location.state.fromBill
-      setEditPay({ paymentType: 'Send', partner: b.vendor||'', amount: b.total||'', account: '', accountCode: '', journal: '', memo: `Payment for ${b.billId}` })
+      setEditPay({
+        paymentType: 'Send',
+        partner: b.vendor||'',
+        vendorBillId: b.vendorBillId || b.rawId || b.billId || '',
+        amount: b.total||'',
+        account: 'State Bank of India – Current A/c',
+        accountCode: '1002',
+        journal: 'Bank',
+        memo: `Payment for ${b.id || b.billId || ''}`
+      })
       setModalOpen(true)
       window.history.replaceState({}, document.title)
     }
@@ -53,17 +103,51 @@ export default function PaymentsPage() {
   const openEdit = (p) => { setEditPay(p);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditPay(null) }
 
-  const handleSave = (data, newStatus) => {
-    if (editPay) {
-      setPayments(prev => prev.map(p => p.id === editPay.id ? { ...p, ...data, status: newStatus || p.status } : p))
-    } else {
-      setPayments(prev => [...prev, { id: nextPayId(), status: newStatus || 'Draft', ...data }])
+  const handleSave = async (data, newStatus) => {
+    try {
+      let bId = data.vendorBillId
+      if (!bId && bills.length > 0) {
+        const matching = bills.find(b => (b.vendor?.name || '').toLowerCase() === (data.partner || '').toLowerCase())
+        if (matching) bId = matching.id
+      }
+      if (!bId && bills.length > 0) {
+        bId = bills[0].id
+      }
+
+      if (!bId) {
+        toast.warning('Please create or confirm a vendor bill first before recording payment.')
+        return
+      }
+
+      const method = (data.journal || '').toLowerCase().includes('cash') ? 'CASH' : 'BANK'
+      await api.payments.recordVendorPayment({
+        vendorBillId: bId,
+        paymentMethod: method,
+        amount: parseFloat(data.amount) || 0,
+        paymentDate: new Date().toISOString(),
+        reference: data.memo || undefined,
+      })
+
+      loadPayments()
+      toast.success(`Payment of ₹${data.amount} recorded successfully!`)
+      close()
+    } catch (err) {
+      toast.error('Error recording payment: ' + err.message)
     }
-    close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this payment?')) setPayments(prev => prev.filter(p => p.id !== id))
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Payment Record',
+      message: `Delete payment record #${id}?`,
+      detail: 'This will remove the recorded disbursement/receipt from the register.',
+      confirmText: 'Delete Payment',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      setPayments(prev => prev.filter(p => p.id !== id))
+      toast.info(`Payment #${id} deleted`)
+    }
   }
 
   return (
@@ -101,13 +185,20 @@ export default function PaymentsPage() {
           <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
-      <PaymentModal isOpen={modalOpen} onClose={close} onSave={handleSave} editPayment={editPay} />
+      <PaymentModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        editPayment={editPay}
+        partners={partners}
+        accounts={accounts}
+      />
     </DashboardLayout>
   )
 }
 
 /* ── Payment Form Modal ── */
-function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
+function PaymentModal({ isOpen, onClose, onSave, editPayment, partners = [], accounts = [] }) {
   const [fields,  setFields]  = useState(EMPTY_PAYMENT)
   const [errors,  setErrors]  = useState({})
   const [partnerDrop, setPartnerDrop] = useState(false)
@@ -116,9 +207,17 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
   useEffect(() => {
     if (isOpen) {
-      setFields(editPayment ? { paymentType: editPayment.paymentType||'Send', partner: editPayment.partner||'',
-        amount: editPayment.amount||'', account: editPayment.account||'', accountCode: editPayment.accountCode||'',
-        journal: editPayment.journal||'', memo: editPayment.memo||'' } : EMPTY_PAYMENT)
+      setFields(editPayment ? {
+        paymentType: editPayment.paymentType||'Send',
+        partner: editPayment.partner||'',
+        partnerId: editPayment.partnerId||'',
+        vendorBillId: editPayment.vendorBillId||'',
+        amount: editPayment.amount||'',
+        account: editPayment.account||'',
+        accountCode: editPayment.accountCode||'',
+        journal: editPayment.journal||'Bank',
+        memo: editPayment.memo||''
+      } : EMPTY_PAYMENT)
       setErrors({})
     }
   }, [isOpen, editPayment])
@@ -136,15 +235,14 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
   const change = (name, value) => { setFields(p => ({ ...p, [name]: value })); setErrors(p => ({ ...p, [name]: undefined })) }
 
   const selectAccount = (acct) => {
-    change('account', acct.name); change('accountCode', acct.code); change('journal', acct.journal)
+    change('account', acct.name); change('accountCode', acct.code); change('journal', acct.type?.toLowerCase().includes('cash') ? 'Cash' : 'Bank')
     setAcctDrop(false)
   }
 
   const validate = () => {
     const e = {}
-    if (!fields.partner) e.partner = 'Partner is required'
+    if (!fields.partner && !fields.partnerId) e.partner = 'Partner is required'
     if (!fields.amount || isNaN(Number(fields.amount)) || Number(fields.amount) <= 0) e.amount = 'Enter a valid amount'
-    if (!fields.account) e.account = 'Account is required'
     return e
   }
 
@@ -153,10 +251,19 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
     onSave(fields, 'Posted')
   }
 
-  const payId = editPayment?.id || `PAY-${String(payCounter).padStart(3,'0')}`
+  const payId = editPayment?.id || 'New Draft'
 
-  const partnerOpts = PARTNERS.filter(p => !fields.partner || p.toLowerCase().includes(fields.partner.toLowerCase()))
-  const acctOpts    = ACCOUNTS.filter(a => !fields.account  || a.name.toLowerCase().includes(fields.account.toLowerCase()))
+  const partnerOpts = partners.filter(p => {
+    const pName = typeof p === 'string' ? p : (p?.name || '')
+    return !fields.partner || pName.toLowerCase().includes(fields.partner.toLowerCase())
+  })
+  const liquidityAccounts = accounts.filter(a => {
+    const typeName = (a.type || a.accountType || '').toLowerCase()
+    const name = (a.name || '').toLowerCase()
+    return typeName.includes('bank') || typeName.includes('cash') || name.includes('bank') || name.includes('cash') || name.includes('hand')
+  })
+  const baseAccountList = liquidityAccounts.length > 0 ? liquidityAccounts : ACCOUNTS
+  const acctOpts    = baseAccountList.filter(a => !fields.account || a.name.toLowerCase().includes(fields.account.toLowerCase()))
 
   return (
     <div className="dfm-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -173,7 +280,11 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
           </div>
         </div>
 
-        <h2 className="dfm-title">{editPayment ? `Edit ${editPayment.id}` : 'New Payment'}</h2>
+        <h2 className="dfm-title">
+          {editPayment
+            ? (editPayment.paymentNumber || (editPayment.id && editPayment.id !== 'Draft' ? `Edit ${editPayment.id}` : 'Record Vendor Payment'))
+            : 'New Payment'}
+        </h2>
         <div className="dfm-body">
 
           {/* Payment No (read-only) */}
@@ -201,7 +312,9 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Partner */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Partner</label>
+            <label className="dfm-lbl">
+              Partner <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap dfm-dropdown-wrap">
               <input ref={firstRef} type="text" className={`dfm-input${errors.partner?' dfm-input--err':''}`}
                 placeholder="Select partner..." value={fields.partner}
@@ -209,7 +322,20 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
                 onFocus={() => setPartnerDrop(true)} autoComplete="off" />
               {partnerDrop && partnerOpts.length > 0 && (
                 <div className="dfm-dropdown">
-                  {partnerOpts.map(p => <button key={p} type="button" className="dfm-drop-opt" onMouseDown={() => { change('partner', p); setPartnerDrop(false) }}>{p}</button>)}
+                  {partnerOpts.map(p => {
+                    const pName = typeof p === 'string' ? p : (p?.name || '')
+                    const pId = typeof p === 'object' ? p?.id : ''
+                    return (
+                      <button key={pId || pName} type="button" className="dfm-drop-opt"
+                        onMouseDown={() => {
+                          change('partner', pName)
+                          if (pId) change('partnerId', pId)
+                          setPartnerDrop(false)
+                        }}>
+                        {pName}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
               {errors.partner && <span className="dfm-err">{errors.partner}</span>}
@@ -218,7 +344,9 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Amount */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Amount</label>
+            <label className="dfm-lbl">
+              Amount <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap">
               <div className="dfm-price-wrap">
                 <span className="dfm-price-prefix">₹</span>
@@ -233,7 +361,9 @@ function PaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Account */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Account</label>
+            <label className="dfm-lbl">
+              Account <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap dfm-dropdown-wrap">
               <input type="text" className={`dfm-input${errors.account?' dfm-input--err':''}`}
                 placeholder="Search bank/cash account..." value={fields.account}

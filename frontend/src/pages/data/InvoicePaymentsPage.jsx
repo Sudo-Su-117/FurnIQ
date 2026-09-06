@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './DataForms.css'
 
 const PARTNERS  = ['Ratan Mehra','Priya Kapoor','Ananya Sharma','Mahindra Living','Godrej Interio Ltd.']
@@ -11,28 +13,70 @@ const PAY_VIA   = ['Bank', 'Cash']
 const STATUS_STYLE = { Draft:'df-badge--draft', Confirmed:'df-badge--confirmed', Cancelled:'df-badge--overdue' }
 const fmtINR = (n) => `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-const INITIAL_PAYMENTS = [
-  { id: 'INVPAY-001', paymentType:'Receive', partner:'Ratan Mehra',  date:'2026-09-02', paymentVia:'Bank', amount:56640,  memo:'Payment for INV/2026/0001', status:'Confirmed' },
-  { id: 'INVPAY-002', paymentType:'Receive', partner:'Priya Kapoor', date:'2026-09-10', paymentVia:'Bank', amount:126850, memo:'Payment for INV/2026/0002', status:'Draft'     },
-]
+const EMPTY_PAY = { paymentType:'Receive', partner:'', partnerId:'', customerInvoiceId:'', date:'', paymentVia:'Bank', amount:'', memo:'' }
 
-const EMPTY_PAY = { paymentType:'Receive', partner:'', date:'', paymentVia:'Bank', amount:'', memo:'' }
-
-let payCounter = INITIAL_PAYMENTS.length + 1
-function nextPayId() { return `INVPAY-${String(payCounter++).padStart(3,'0')}` }
+import { api, extractList } from '../../services/api'
 
 export default function InvoicePaymentsPage() {
   const location = useLocation()
-  const [payments,  setPayments]  = useState(INITIAL_PAYMENTS)
+  const toast    = useToast()
+  const confirm  = useConfirm()
+  const [payments,  setPayments]  = useState([])
+  const [partners,  setPartners]  = useState([])
+  const [invoices,  setInvoices]  = useState([])
+  const [loading,   setLoading]   = useState(false)
   const [search,    setSearch]    = useState('')
   const [statusFlt, setStatusFlt] = useState('All')
   const [modalOpen, setModalOpen] = useState(false)
   const [editPay,   setEditPay]   = useState(null)
 
+  const loadPayments = useCallback(() => {
+    setLoading(true)
+    api.payments.list({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const customerPayments = list.filter(p => p.type === 'CUSTOMER_PAYMENT' || !p.type)
+        const mapped = customerPayments.map(p => ({
+          ...p,
+          id: p.paymentNumber || p.id,
+          rawId: p.id,
+          paymentType: 'Receive',
+          partner: p.customerInvoice?.customer?.name || 'Customer',
+          date: p.paymentDate ? new Date(p.paymentDate).toISOString().split('T')[0] : '',
+          paymentVia: p.paymentMethod === 'CASH' ? 'Cash' : 'Bank',
+          amount: Number(p.amount || 0),
+          memo: p.reference || (p.customerInvoice?.invoiceNumber ? `Payment for ${p.customerInvoice.invoiceNumber}` : ''),
+          status: 'Confirmed',
+        }))
+        setPayments(mapped)
+      })
+      .catch(err => console.warn('Could not load payments:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadPayments()
+    api.contacts.list({ limit: 100 }).then(res => {
+      setPartners(extractList(res))
+    }).catch(e => console.warn('Failed to load contacts:', e.message))
+
+    api.sales.listInvoices({ limit: 100 }).then(res => {
+      setInvoices(extractList(res))
+    }).catch(e => console.warn('Failed to load invoices:', e.message))
+  }, [loadPayments])
+
   useEffect(() => {
     if (location.state?.fromInvoice) {
       const inv = location.state.fromInvoice
-      setEditPay({ paymentType:'Receive', partner: inv.customer||'', date: inv.invoiceDate||'', paymentVia:'Bank', amount: inv.total||'', memo:`Payment for ${inv.invoiceId}` })
+      setEditPay({
+        paymentType:'Receive',
+        partner: inv.customer||'',
+        customerInvoiceId: inv.rawId || inv.invoiceId || '',
+        date: inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        paymentVia:'Bank',
+        amount: inv.total||'',
+        memo:`Payment for ${inv.id || inv.invoiceId || ''}`
+      })
       setModalOpen(true)
       window.history.replaceState({}, document.title)
     }
@@ -50,17 +94,50 @@ export default function InvoicePaymentsPage() {
   const openEdit = (p) => { setEditPay(p);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditPay(null) }
 
-  const handleSave = (data, newStatus) => {
-    if (editPay) {
-      setPayments(prev => prev.map(p => p.id === editPay.id ? { ...p, ...data, status: newStatus||p.status } : p))
-    } else {
-      setPayments(prev => [...prev, { id: nextPayId(), status: newStatus||'Draft', ...data }])
+  const handleSave = async (data, newStatus) => {
+    try {
+      let invId = data.customerInvoiceId
+      if (!invId && invoices.length > 0) {
+        const matching = invoices.find(i => (i.customer?.name || '').toLowerCase() === (data.partner || '').toLowerCase())
+        if (matching) invId = matching.id
+      }
+      if (!invId && invoices.length > 0) {
+        invId = invoices[0].id
+      }
+
+      if (!invId) {
+        toast.warning('Please create or confirm an invoice first before recording customer payment.')
+        return
+      }
+
+      await api.payments.recordCustomerPayment({
+        customerInvoiceId: invId,
+        paymentMethod: data.paymentVia === 'Cash' ? 'CASH' : 'BANK',
+        amount: parseFloat(data.amount) || 0,
+        paymentDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+        reference: data.memo || undefined,
+      })
+
+      loadPayments()
+      toast.success(`Customer payment of ₹${data.amount} recorded!`)
+      close()
+    } catch (err) {
+      toast.error('Error recording payment: ' + err.message)
     }
-    close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this payment?')) setPayments(prev => prev.filter(p => p.id !== id))
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Customer Payment',
+      message: `Are you sure you want to delete payment "${id}"?`,
+      detail: 'This will remove the payment transaction record.',
+      confirmText: 'Delete Payment',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      setPayments(prev => prev.filter(p => p.id !== id))
+      toast.info(`Payment ${id} deleted`)
+    }
   }
 
   return (
@@ -98,13 +175,20 @@ export default function InvoicePaymentsPage() {
           <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
-      <InvoicePaymentModal isOpen={modalOpen} onClose={close} onSave={handleSave} editPayment={editPay} />
+      <InvoicePaymentModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        editPayment={editPay}
+        partners={partners}
+        invoices={invoices}
+      />
     </DashboardLayout>
   )
 }
 
 /* ── Invoice Payment Modal ── */
-function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
+function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment, partners = [], invoices = [] }) {
   const [fields,      setFields]      = useState(EMPTY_PAY)
   const [errors,      setErrors]      = useState({})
   const [partnerDrop, setPartnerDrop] = useState(false)
@@ -112,9 +196,16 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
   useEffect(() => {
     if (isOpen) {
-      setFields(editPayment ? { paymentType: editPayment.paymentType||'Receive', partner: editPayment.partner||'',
-        date: editPayment.date||'', paymentVia: editPayment.paymentVia||'Bank',
-        amount: editPayment.amount||'', memo: editPayment.memo||'' } : EMPTY_PAY)
+      setFields(editPayment ? {
+        paymentType: editPayment.paymentType||'Receive',
+        partner: editPayment.partner||'',
+        partnerId: editPayment.partnerId||'',
+        customerInvoiceId: editPayment.customerInvoiceId||'',
+        date: editPayment.date||'',
+        paymentVia: editPayment.paymentVia||'Bank',
+        amount: editPayment.amount||'',
+        memo: editPayment.memo||''
+      } : EMPTY_PAY)
       setErrors({})
     }
   }, [isOpen, editPayment])
@@ -133,7 +224,7 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
   const validate = () => {
     const e = {}
-    if (!fields.partner) e.partner = 'Partner is required'
+    if (!fields.partner && !fields.partnerId) e.partner = 'Partner is required'
     if (!fields.date)    e.date    = 'Date is required'
     if (!fields.amount || isNaN(Number(fields.amount)) || Number(fields.amount) <= 0) e.amount = 'Enter a valid amount'
     return e
@@ -148,8 +239,11 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
     if (editPayment) { onSave({ ...fields }, 'Cancelled') } else { setFields(EMPTY_PAY); setErrors({}) }
   }
 
-  const partnerOpts = PARTNERS.filter(p => !fields.partner || p.toLowerCase().includes(fields.partner.toLowerCase()))
-  const payId = editPayment?.id || `INVPAY-${String(payCounter).padStart(3,'0')}`
+  const partnerOpts = partners.filter(p => {
+    const pName = typeof p === 'string' ? p : (p?.name || '')
+    return !fields.partner || pName.toLowerCase().includes(fields.partner.toLowerCase())
+  })
+  const payId = editPayment?.id || 'New Draft'
 
   return (
     <div className="dfm-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -166,7 +260,11 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
           </div>
         </div>
 
-        <h2 className="dfm-title">{editPayment?`Edit ${editPayment.id}`:'New Invoice Payment'}</h2>
+        <h2 className="dfm-title">
+          {editPayment
+            ? (editPayment.paymentNumber || (editPayment.id && editPayment.id !== 'Draft' ? `Edit ${editPayment.id}` : 'Record Customer Payment'))
+            : 'New Invoice Payment'}
+        </h2>
 
         <div className="dfm-body">
           {/* Payment No */}
@@ -198,7 +296,9 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Partner */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Partner</label>
+            <label className="dfm-lbl">
+              Partner <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap dfm-dropdown-wrap">
               <input ref={firstRef} type="text" className={`dfm-input${errors.partner?' dfm-input--err':''}`}
                 placeholder="Select partner..."
@@ -207,7 +307,20 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
                 onFocus={()=>setPartnerDrop(true)} autoComplete="off" />
               {partnerDrop&&partnerOpts.length>0&&(
                 <div className="dfm-dropdown">
-                  {partnerOpts.map(p=><button key={p} type="button" className="dfm-drop-opt" onMouseDown={()=>{change('partner',p);setPartnerDrop(false)}}>{p}</button>)}
+                  {partnerOpts.map(p => {
+                    const pName = typeof p === 'string' ? p : (p?.name || '')
+                    const pId = typeof p === 'object' ? p?.id : ''
+                    return (
+                      <button key={pId || pName} type="button" className="dfm-drop-opt"
+                        onMouseDown={() => {
+                          change('partner', pName)
+                          if (pId) change('partnerId', pId)
+                          setPartnerDrop(false)
+                        }}>
+                        {pName}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
               {errors.partner&&<span className="dfm-err">{errors.partner}</span>}
@@ -216,7 +329,9 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Date */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Date</label>
+            <label className="dfm-lbl">
+              Date <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap">
               <input type="date" className={`dfm-input${errors.date?' dfm-input--err':''}`}
                 value={fields.date} onChange={e=>change('date',e.target.value)} />
@@ -242,7 +357,9 @@ function InvoicePaymentModal({ isOpen, onClose, onSave, editPayment }) {
 
           {/* Amount */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Amount</label>
+            <label className="dfm-lbl">
+              Amount <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap">
               <div className="dfm-price-wrap">
                 <span className="dfm-price-prefix">₹</span>

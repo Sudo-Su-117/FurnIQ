@@ -1,0 +1,177 @@
+/* ===== FurnIQ Luxury Confirm Dialog Modal ===== */
+
+.furniq-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  background: rgba(36, 28, 16, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: confirmFadeIn 0.2s ease-out;
+}
+
+@keyframes confirmFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.furniq-confirm-modal {
+  background: #FFFFFF;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 24px 60px rgba(44, 36, 22, 0.28), 0 4px 16px rgba(0, 0, 0, 0.08);
+  border: 1.5px solid rgba(212, 196, 160, 0.65);
+  overflow: hidden;
+  animation: confirmSlideUp 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes confirmSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.furniq-confirm-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 24px 24px 16px;
+}
+
+.furniq-confirm-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.furniq-confirm-icon-wrap--danger {
+  background: #FDECEA;
+  color: #C0392B;
+  border: 1px solid #F5C6C2;
+}
+
+.furniq-confirm-icon-wrap--warning {
+  background: #FFF3DC;
+  color: #8C6A30;
+  border: 1px solid #E8C97A;
+}
+
+.furniq-confirm-icon-wrap--primary {
+  background: rgba(166, 124, 61, 0.12);
+  color: #8C6A30;
+  border: 1px solid rgba(166, 124, 61, 0.3);
+}
+
+.furniq-confirm-titles {
+  flex: 1;
+}
+
+.furniq-confirm-title {
+  font-family: var(--font-heading, 'Playfair Display', serif);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-dark, #2C2416);
+  margin: 0 0 6px 0;
+  line-height: 1.3;
+}
+
+.furniq-confirm-msg {
+  font-family: var(--font-body, 'Plus Jakarta Sans', sans-serif);
+  font-size: 14px;
+  color: var(--text-medium, #615545);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.furniq-confirm-detail {
+  margin: 0 24px 20px;
+  padding: 10px 14px;
+  background: #FDFBF7;
+  border: 1px solid rgba(212, 196, 160, 0.45);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-light, #8C7B65);
+  line-height: 1.45;
+}
+
+.furniq-confirm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px 20px;
+  background: #FAF6EF;
+  border-top: 1px solid rgba(212, 196, 160, 0.35);
+}
+
+.furniq-confirm-btn {
+  padding: 9px 20px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: var(--font-body, 'Plus Jakarta Sans', sans-serif);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.furniq-confirm-btn--cancel {
+  background: #FFFFFF;
+  color: var(--text-medium, #615545);
+  border: 1.5px solid var(--border-color, rgba(212, 196, 160, 0.7));
+}
+
+.furniq-confirm-btn--cancel:hover {
+  background: #F5EFE4;
+  color: var(--text-dark, #2C2416);
+}
+
+.furniq-confirm-btn--danger {
+  background: #C0392B;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(192, 57, 43, 0.3);
+}
+
+.furniq-confirm-btn--danger:hover {
+  background: #A93226;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(192, 57, 43, 0.4);
+}
+
+.furniq-confirm-btn--warning {
+  background: #D97706;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.3);
+}
+
+.furniq-confirm-btn--warning:hover {
+  background: #B45309;
+  transform: translateY(-1px);
+}
+
+.furniq-confirm-btn--primary {
+  background: var(--primary, #A67C3D);
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(166, 124, 61, 0.3);
+}
+
+.furniq-confirm-btn--primary:hover {
+  background: var(--primary-dark, #8B6429);
+  transform: translateY(-1px);
+}

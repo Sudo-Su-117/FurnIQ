@@ -2,47 +2,118 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './DataForms.css'
-
-const VENDORS  = ['Timber World', 'Steel Hub', 'Fabric Co.', 'Godrej Interio Ltd.', 'Ramesh Timber Works']
-const PRODUCTS = ['Oak Dining Table', 'Rosewood Sofa Set', 'Teak Coffee Table', 'Wicker Armchair', 'Sheesham Bookshelf']
-const COA_ACCOUNTS = [
-  { code: '4001', name: 'Cost of Goods Sold' },
-  { code: '4002', name: 'Workshop Rent' },
-  { code: '4003', name: 'Salaries & Wages' },
-  { code: '4004', name: 'Utilities & Power' },
-  { code: '4005', name: 'Marketing & Advertising' },
-  { code: '2001', name: 'Accounts Payable (Creditors)' },
-]
 
 const STATUS_STYLE = { Draft: 'df-badge--draft', Confirmed: 'df-badge--confirmed', Paid: 'df-badge--billed' }
 const fmtINR = (n) => `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-const INITIAL_BILLS = [
-  { id: 'BILL/2026/0001', vendorRef: 'VB-REF-001', vendor: 'Timber World', billRef: '', date: '2026-09-02', lines: [], total: 73160, status: 'Confirmed' },
-  { id: 'BILL/2026/0002', vendorRef: 'VB-REF-002', vendor: 'Steel Hub',    billRef: '', date: '2026-09-03', lines: [], total: 45430, status: 'Draft'     },
-]
+const EMPTY_LINE = { product: '', productId: '', account: '', accountCode: '', description: '', qty: '', unitPrice: '', total: 0 }
+const EMPTY_BILL = { vendorRef: '', vendor: '', vendorId: '', billRef: '', billBody: '', date: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] }
 
-const EMPTY_LINE = { product: '', account: '', accountCode: '', description: '', qty: '', unitPrice: '', total: 0 }
-const EMPTY_BILL = { vendorRef: '', vendor: '', billRef: '', billBody: '', date: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] }
-
-let billCounter = INITIAL_BILLS.length + 1
-function nextBillId() { return `BILL/2026/${String(billCounter++).padStart(4, '0')}` }
+import { api, extractList } from '../../services/api'
 
 export default function VendorBillsPage() {
   const location = useLocation()
   const navigate  = useNavigate()
-  const [bills,     setBills]     = useState(INITIAL_BILLS)
+  const toast     = useToast()
+  const confirm   = useConfirm()
+  const [bills,     setBills]     = useState([])
+  const [vendors,   setVendors]   = useState([])
+  const [products,  setProducts]  = useState([])
+  const [accounts,  setAccounts]  = useState([])
+  const [loading,   setLoading]   = useState(false)
   const [search,    setSearch]    = useState('')
   const [statusFlt, setStatusFlt] = useState('All')
   const [modalOpen, setModalOpen] = useState(false)
   const [editBill,  setEditBill]  = useState(null)
 
+  const loadBills = useCallback(() => {
+    setLoading(true)
+    api.purchases.listBills({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(b => ({
+          ...b,
+          id: b.billNumber || b.id,
+          rawId: b.id,
+          vendor: b.vendor?.name || 'Vendor',
+          vendorId: b.vendorId,
+          vendorRef: b.billNumber || 'REF',
+          date: b.billDate ? new Date(b.billDate).toISOString().split('T')[0] : '',
+          total: Number(b.totalAmount || 0),
+          status: b.status === 'PAID' ? 'Paid' : (b.status === 'CONFIRMED' ? 'Confirmed' : 'Draft'),
+          lines: (b.lines || []).map(l => {
+            const q = Number(l.quantity || l.qty || 0)
+            const u = Number(l.unitPrice || 0)
+            const calcTotal = q * u
+            const t = Number(l.total || l.totalPrice || 0) || calcTotal
+            return {
+              product: l.product?.name || (typeof l.product === 'string' ? l.product : ''),
+              productId: l.productId || l.product?.id || '',
+              account: l.account || '',
+              accountCode: l.accountCode || '',
+              description: l.description || '',
+              qty: q || '',
+              unitPrice: u || '',
+              total: t,
+            }
+          })
+        }))
+        setBills(mapped)
+      })
+      .catch(err => console.warn('Could not load live vendor bills:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadBills()
+    api.contacts.list({ limit: 100 }).then(res => {
+      const list = extractList(res)
+      setVendors(list)
+    }).catch(e => console.warn('Failed to load vendors:', e.message))
+
+    api.products.list({ limit: 100 }).then(res => {
+      const list = extractList(res)
+      setProducts(list)
+    }).catch(e => console.warn('Failed to load products:', e.message))
+
+    api.accounting.getAccounts().then(res => {
+      const list = extractList(res)
+      setAccounts(list)
+    }).catch(e => console.warn('Failed to load accounts:', e.message))
+  }, [loadBills])
+
   // Pre-fill from Purchase Order navigation
   useEffect(() => {
     if (location.state?.fromPO) {
       const po = location.state.fromPO
-      setEditBill({ vendor: po.vendor || '', date: po.date || '', lines: po.lines || [], vendorRef: '', billRef: '', billBody: `From PO: ${po.poId}` })
+      const mappedLines = (po.lines || []).map(l => {
+        const q = Number(l.qty || l.quantity || 0)
+        const u = Number(l.unitPrice || l.price || 0)
+        const calcTotal = q * u
+        const t = Number(l.total || l.totalPrice || 0) || calcTotal
+        return {
+          product: typeof l.product === 'string' ? l.product : (l.product?.name || ''),
+          productId: l.productId || l.product?.id || '',
+          account: '',
+          accountCode: '',
+          description: '',
+          qty: q || '',
+          unitPrice: u || '',
+          total: t,
+        }
+      })
+      setEditBill({
+        vendor: po.vendor || '',
+        vendorId: po.vendorId || '',
+        date: po.date || new Date().toISOString().split('T')[0],
+        lines: mappedLines.length ? mappedLines : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }],
+        vendorRef: '',
+        billRef: '',
+        billBody: `From PO: ${po.poId || po.id || ''}`
+      })
       setModalOpen(true)
       window.history.replaceState({}, document.title)
     }
@@ -60,30 +131,119 @@ export default function VendorBillsPage() {
   const openEdit = (b) => { setEditBill(b);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditBill(null) }
 
-  const handleSave = (data, newStatus) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    if (editBill) {
-      setBills(prev => prev.map(b => b.id === editBill.id ? { ...b, ...data, total, status: newStatus || b.status } : b))
-    } else {
-      setBills(prev => [...prev, { id: nextBillId(), total, status: newStatus || 'Draft', ...data }])
+  const handleSave = async (data, newStatus) => {
+    try {
+      if (editBill?.rawId) {
+        if (newStatus === 'Confirmed' && editBill.status !== 'Confirmed') {
+          await api.purchases.confirmBill(editBill.rawId)
+          toast.success(`Vendor Bill ${editBill.id} confirmed!`)
+        } else {
+          toast.success(`Vendor Bill ${editBill.id} updated!`)
+        }
+        loadBills()
+        close()
+        return
+      }
+
+      let vId = data.vendorId
+      if (!vId && vendors.length > 0) {
+        const found = vendors.find(v => v.name.toLowerCase() === (data.vendor || '').toLowerCase())
+        if (found) vId = found.id
+      }
+      if (!vId && vendors.length > 0) vId = vendors[0].id
+
+      const validLines = data.lines.filter(l => (l.product || l.productId) && Number(l.qty) > 0).map(l => {
+        let pId = l.productId
+        if (!pId) {
+          const foundP = products.find(p => p.name.toLowerCase() === (l.product || '').toLowerCase())
+          if (foundP) pId = foundP.id
+        }
+        if (!pId && products.length > 0) pId = products[0].id
+        return {
+          productId: pId,
+          quantity: parseInt(l.qty, 10) || 1,
+          unitPrice: parseFloat(l.unitPrice) || 0,
+        }
+      })
+
+      if (validLines.length === 0 && products.length > 0) {
+        validLines.push({
+          productId: products[0].id,
+          quantity: 1,
+          unitPrice: Number(products[0].costPrice || products[0].salesPrice || 1000),
+        })
+      }
+
+      const payload = {
+        vendorId: vId,
+        billDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+        dueDate: data.dueDate ? new Date(data.dueDate).toISOString() : undefined,
+        lines: validLines,
+      }
+
+      const created = await api.purchases.createBill(payload)
+      if (newStatus === 'Confirmed' && created?.id) {
+        await api.purchases.confirmBill(created.id)
+        toast.success(`Vendor Bill ${created.billNumber || 'BILL'} confirmed!`)
+      } else {
+        toast.success(`Vendor Bill ${created?.billNumber || 'BILL'} created successfully!`)
+      }
+      loadBills()
+      close()
+    } catch (err) {
+      toast.error('Error saving vendor bill: ' + err.message)
     }
-    close()
   }
 
-  const handlePay = (data) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    const id = editBill?.id || nextBillId()
-    setBills(prev => {
-      const exists = prev.find(b => b.id === id)
-      if (exists) return prev.map(b => b.id === id ? { ...b, ...data, total, status: 'Paid' } : b)
-      return [...prev, { id, total, status: 'Paid', ...data }]
+  const handlePay = async (data) => {
+    try {
+      let bId = editBill?.rawId
+      if (!bId) {
+        let vId = data.vendorId
+        if (!vId && vendors.length > 0) {
+          const found = vendors.find(v => v.name.toLowerCase() === (data.vendor || '').toLowerCase())
+          if (found) vId = found.id
+        }
+        if (!vId && vendors.length > 0) vId = vendors[0].id
+
+        const validLines = data.lines.filter(l => (l.product || l.productId) && Number(l.qty) > 0).map(l => ({
+          productId: l.productId || products[0]?.id,
+          quantity: parseInt(l.qty, 10) || 1,
+          unitPrice: parseFloat(l.unitPrice) || 0,
+        }))
+        const created = await api.purchases.createBill({
+          vendorId: vId,
+          billDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+          lines: validLines.length ? validLines : [{ productId: products[0]?.id, quantity: 1, unitPrice: 1000 }],
+        })
+        bId = created.id
+      }
+      if (editBill?.status !== 'Confirmed' && editBill?.status !== 'Paid') {
+        try { await api.purchases.confirmBill(bId) } catch (e) { /* ignore if already confirmed */ }
+      }
+      const subtotal = data.lines.reduce((s,l) => s + (Number(l.total) || ((Number(l.qty)||0)*(Number(l.unitPrice)||0))), 0)
+      const total = Number((subtotal * 1.18).toFixed(2))
+      close()
+      loadBills()
+      toast.info('Opening payment registration...')
+      navigate('/dashboard/data/payments', { state: { fromBill: { ...data, vendorBillId: bId, rawId: bId, billId: editBill?.id || 'BILL', total, vendor: data.vendor } } })
+    } catch (err) {
+      toast.error('Error preparing payment: ' + err.message)
+    }
+  }
+
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Vendor Bill',
+      message: `Are you sure you want to delete vendor bill "${id}"?`,
+      detail: 'This will remove the vendor bill record from your accounts payable.',
+      confirmText: 'Delete Bill',
+      confirmVariant: 'danger',
     })
-    close()
-    navigate('/dashboard/data/payments', { state: { fromBill: { ...data, billId: id, total, vendor: data.vendor } } })
-  }
-
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this vendor bill?')) setBills(prev => prev.filter(b => b.id !== id))
+    if (ok) {
+      setBills(prev => prev.filter(b => b.id !== id))
+      toast.info(`Vendor Bill ${id} deleted`)
+    }
   }
 
   return (
@@ -102,12 +262,11 @@ export default function VendorBillsPage() {
         </div>
         <div className="df-card">
           <table className="df-table">
-            <thead><tr><th>Bill Ref</th><th>Vendor Bill Ref</th><th>Vendor</th><th>Bill Date</th><th className="align-right">Total</th><th className="align-center">Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Bill No.</th><th>Vendor</th><th>Bill Date</th><th className="align-right">Total</th><th className="align-center">Status</th><th>Actions</th></tr></thead>
             <tbody>
               {paged.map(b => (
                 <tr key={b.id} className="df-tr">
                   <td><button className="df-link-btn" onClick={() => openEdit(b)}>{b.id}</button></td>
-                  <td className="df-date">{b.vendorRef}</td>
                   <td className="df-vendor">{b.vendor}</td>
                   <td className="df-date">{b.date}</td>
                   <td className="align-right df-total">{fmtINR(b.total)}</td>
@@ -120,13 +279,23 @@ export default function VendorBillsPage() {
           <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
-      <VendorBillModal isOpen={modalOpen} onClose={close} onSave={handleSave} onPay={handlePay} editBill={editBill} />
+      <VendorBillModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        onPay={handlePay}
+        editBill={editBill}
+        vendors={vendors}
+        products={products}
+        accounts={accounts}
+      />
     </DashboardLayout>
   )
 }
 
-/* ── Vendor Bill Form Modal ── */
-function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
+/* ── Vendor Bill Modal ── */
+function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill, vendors = [], products = [], accounts = [] }) {
+  const toast         = useToast()
   const [fields,      setFields]      = useState(EMPTY_BILL)
   const [errors,      setErrors]      = useState({})
   const [confirmed,   setConfirmed]   = useState(false)
@@ -138,9 +307,33 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
   useEffect(() => {
     if (isOpen) {
       if (editBill) {
-        setFields({ vendorRef: editBill.vendorRef||'', vendor: editBill.vendor||'', billRef: editBill.billRef||'',
-          billBody: editBill.billBody||'', date: editBill.date||'',
-          lines: editBill.lines?.length ? editBill.lines.map(l=>({...l})) : [{ ...EMPTY_LINE },{ ...EMPTY_LINE }] })
+        const mappedLines = editBill.lines?.length
+          ? editBill.lines.map(l => {
+              const q = Number(l.qty || l.quantity || 0)
+              const u = Number(l.unitPrice || 0)
+              const calcTotal = q * u
+              const t = Number(l.total || l.totalPrice || 0) || calcTotal
+              return {
+                product: typeof l.product === 'string' ? l.product : (l.product?.name || ''),
+                productId: l.productId || l.product?.id || '',
+                account: l.account || '',
+                accountCode: l.accountCode || '',
+                description: l.description || '',
+                qty: q || '',
+                unitPrice: u || '',
+                total: t,
+              }
+            })
+          : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]
+        setFields({
+          vendorRef: editBill.vendorRef||'',
+          vendor: editBill.vendor||'',
+          vendorId: editBill.vendorId||'',
+          billRef: editBill.billRef||'',
+          billBody: editBill.billBody||'',
+          date: editBill.date||'',
+          lines: mappedLines,
+        })
         setConfirmed(editBill.status === 'Confirmed' || editBill.status === 'Paid')
       } else { setFields(EMPTY_BILL); setConfirmed(false) }
       setErrors({})
@@ -157,7 +350,15 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
 
   if (!isOpen) return null
 
-  const totalAmount = fields.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
+  const subtotal = fields.lines.reduce((s, l) => {
+    const q = Number(l.qty) || 0
+    const u = Number(l.unitPrice) || 0
+    const lineTot = Number(l.total) || (q * u)
+    return s + lineTot
+  }, 0)
+  const taxRate = 0.18 // 18% GST Standard Tax
+  const taxAmount = subtotal * taxRate
+  const totalAmount = subtotal + taxAmount
 
   const changeField = (name, value) => { setFields(p => ({ ...p, [name]: value })); setErrors(p => ({ ...p, [name]: undefined })) }
 
@@ -167,7 +368,9 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
         if (i !== idx) return l
         const updated = { ...l, [key]: value }
         if (key === 'qty' || key === 'unitPrice') {
-          updated.total = (Number(key==='qty'?value:l.qty)||0) * (Number(key==='unitPrice'?value:l.unitPrice)||0)
+          const q = Number(key === 'qty' ? value : l.qty) || 0
+          const u = Number(key === 'unitPrice' ? value : l.unitPrice) || 0
+          updated.total = q * u
         }
         return updated
       })
@@ -185,8 +388,10 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
 
   const validate = () => {
     const e = {}
-    if (!fields.vendor) e.vendor = 'Vendor is required'
+    if (!fields.vendor && !fields.vendorId) e.vendor = 'Vendor is required'
     if (!fields.date)   e.date   = 'Bill date is required'
+    const hasValidLine = fields.lines.some(l => (l.product || l.productId) && Number(l.qty) > 0)
+    if (!hasValidLine) e.lines = 'At least one product line with a valid quantity is required'
     return e
   }
 
@@ -196,11 +401,11 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
   }
 
   const handlePay = () => {
-    if (!confirmed) { alert('Please confirm the bill before payment.'); return }
+    if (!confirmed) { toast.warning('Please confirm the bill before payment.'); return }
     onPay(fields)
   }
 
-  const billId = editBill?.id || `BILL/2026/${String(billCounter).padStart(4,'0')}`
+  const billId = editBill?.id || 'BILL-NEW'
 
   return (
     <div className="dfm-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -232,7 +437,9 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
                 </div>
               </div>
               <div className="dfm-field">
-                <label className="dfm-lbl">Vendor Name</label>
+                <label className="dfm-lbl">
+                  Vendor Name <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="dfm-input-wrap dfm-dropdown-wrap">
                   <input type="text" className={`dfm-input${errors.vendor?' dfm-input--err':''}`}
                     placeholder="Select vendor..." value={fields.vendor}
@@ -240,8 +447,12 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
                     onFocus={() => setVendorDrop(true)} autoComplete="off" />
                   {vendorDrop && (
                     <div className="dfm-dropdown">
-                      {VENDORS.filter(v => v.toLowerCase().includes(fields.vendor.toLowerCase())).map(v => (
-                        <button key={v} type="button" className="dfm-drop-opt" onMouseDown={() => { changeField('vendor', v); setVendorDrop(false) }}>{v}</button>
+                      {vendors.filter(v => !fields.vendor || v.name.toLowerCase().includes(fields.vendor.toLowerCase())).map(v => (
+                        <button key={v.id} type="button" className="dfm-drop-opt" onMouseDown={() => {
+                          changeField('vendor', v.name)
+                          changeField('vendorId', v.id)
+                          setVendorDrop(false)
+                        }}>{v.name}</button>
                       ))}
                     </div>
                   )}
@@ -249,7 +460,9 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
                 </div>
               </div>
               <div className="dfm-field">
-                <label className="dfm-lbl">Bill Date</label>
+                <label className="dfm-lbl">
+                  Bill Date <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="dfm-input-wrap">
                   <input type="date" className={`dfm-input${errors.date?' dfm-input--err':''}`}
                     value={fields.date} onChange={e => changeField('date', e.target.value)} />
@@ -297,34 +510,52 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
               </thead>
               <tbody>
                 {fields.lines.map((line, idx) => {
-                  const prodOpts = PRODUCTS.filter(p => !line.product || p.toLowerCase().includes(line.product.toLowerCase()))
-                  const acctOpts = COA_ACCOUNTS.filter(a => !line.account || a.name.toLowerCase().includes(line.account.toLowerCase()))
+                  const prodOpts = products.filter(p => !line.product || p.name.toLowerCase().includes(line.product.toLowerCase()))
+                  const acctOpts = accounts.filter(a => !line.account || a.name.toLowerCase().includes(line.account.toLowerCase()))
+                  const lineTotal = Number(line.total) || ((Number(line.qty) || 0) * (Number(line.unitPrice) || 0))
                   return (
                     <tr key={idx} className="dfm-line-row">
                       <td className="dfm-line-td dfm-line-idx">{idx+1}</td>
                       {/* Product */}
-                      <td className="dfm-line-td" style={{position:'relative'}}>
+                      <td className={`dfm-line-td${prodDropIdx===idx?' dfm-line-td--active':''}`} style={{position:'relative', zIndex: prodDropIdx===idx?1100:'auto'}}>
                         <input type="text" className="dfm-line-input" placeholder="Product..."
                           value={line.product}
                           onChange={e => { updateLine(idx,'product',e.target.value); setProdDropIdx(idx) }}
                           onFocus={() => setProdDropIdx(idx)} autoComplete="off" />
                         {prodDropIdx===idx && prodOpts.length>0 && (
                           <div className="dfm-line-dropdown">
-                            {prodOpts.map(p => <button key={p} type="button" className="dfm-line-opt" onMouseDown={() => { updateLine(idx,'product',p); setProdDropIdx(null) }}>{p}</button>)}
+                            <div className="dfm-line-dropdown-header">Available Products ({prodOpts.length})</div>
+                            {prodOpts.map(p => (
+                              <button key={p.id} type="button" className="dfm-line-opt" onMouseDown={() => {
+                                const price = p.costPrice || p.salesPrice || 0
+                                updateLine(idx, 'product', p.name)
+                                updateLine(idx, 'productId', p.id)
+                                updateLine(idx, 'unitPrice', price)
+                                if (line.qty) {
+                                  updateLine(idx, 'total', Number(line.qty) * Number(price))
+                                }
+                                setProdDropIdx(null)
+                              }}>
+                                <span className="dfm-opt-name">{p.name}</span>
+                                <span className="dfm-opt-price">{fmtINR(p.costPrice || p.salesPrice)}</span>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </td>
                       {/* Account */}
-                      <td className="dfm-line-td" style={{position:'relative'}}>
+                      <td className={`dfm-line-td${acctDropIdx===idx?' dfm-line-td--active':''}`} style={{position:'relative', zIndex: acctDropIdx===idx?1100:'auto'}}>
                         <input type="text" className="dfm-line-input" placeholder="Account..."
                           value={line.account}
                           onChange={e => { updateLine(idx,'account',e.target.value); setAcctDropIdx(idx) }}
                           onFocus={() => setAcctDropIdx(idx)} autoComplete="off" />
                         {acctDropIdx===idx && acctOpts.length>0 && (
                           <div className="dfm-line-dropdown">
+                            <div className="dfm-line-dropdown-header">Chart of Accounts ({acctOpts.length})</div>
                             {acctOpts.map(a => (
-                              <button key={a.code} type="button" className="dfm-line-opt" onMouseDown={() => selectAccount(idx, a)}>
-                                <span className="dfm-opt-code">{a.code}</span><span>{a.name}</span>
+                              <button key={a.id || a.code} type="button" className="dfm-line-opt" onMouseDown={() => selectAccount(idx, a)}>
+                                <span className="dfm-opt-code">{a.code}</span>
+                                <span className="dfm-opt-name">{a.name}</span>
                               </button>
                             ))}
                           </div>
@@ -333,7 +564,7 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
                       <td className="dfm-line-td"><input type="text" className="dfm-line-input" placeholder="Description" value={line.description} onChange={e => updateLine(idx,'description',e.target.value)} /></td>
                       <td className="dfm-line-td"><input type="number" className="dfm-line-input dfm-line-input--num" placeholder="Qty" value={line.qty} onChange={e => updateLine(idx,'qty',e.target.value)} /></td>
                       <td className="dfm-line-td"><input type="number" className="dfm-line-input dfm-line-input--num" placeholder="0.00" value={line.unitPrice} onChange={e => updateLine(idx,'unitPrice',e.target.value)} /></td>
-                      <td className="dfm-line-td dfm-line-total">{line.total>0?fmtINR(line.total):'—'}</td>
+                      <td className="dfm-line-td dfm-line-total">{lineTotal > 0 ? fmtINR(lineTotal) : '—'}</td>
                       <td className="dfm-line-td">{fields.lines.length>1&&<button type="button" className="dfm-remove-btn" onClick={() => removeLine(idx)}><TrashIcon /></button>}</td>
                     </tr>
                   )
@@ -341,12 +572,23 @@ function VendorBillModal({ isOpen, onClose, onSave, onPay, editBill }) {
               </tbody>
               <tfoot>
                 <tr className="dfm-total-row">
-                  <td colSpan={6} className="dfm-total-label">Total</td>
-                  <td className="dfm-total-val">{fmtINR(totalAmount)}</td>
+                  <td colSpan={6} className="dfm-total-label">Subtotal (Untaxed)</td>
+                  <td className="dfm-total-val">{fmtINR(subtotal)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row" style={{ background: 'rgba(240,235,224,0.3)' }}>
+                  <td colSpan={6} className="dfm-total-label">Taxes (18% GST)</td>
+                  <td className="dfm-total-val" style={{ color: 'var(--text-medium)' }}>{fmtINR(taxAmount)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row" style={{ fontWeight: 700 }}>
+                  <td colSpan={6} className="dfm-total-label">Total Amount</td>
+                  <td className="dfm-total-val" style={{ color: 'var(--primary-dark)', fontSize: '15px' }}>{fmtINR(totalAmount)}</td>
                   <td />
                 </tr>
               </tfoot>
             </table>
+            {errors.lines && <span className="dfm-err" style={{ marginTop: 8, fontSize: '12px', fontWeight: 600 }}>{errors.lines}</span>}
             <button type="button" className="dfm-add-line-btn" onClick={addLine}><PlusSmIcon /> Add Line</button>
           </div>
 

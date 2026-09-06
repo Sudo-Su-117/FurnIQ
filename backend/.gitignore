@@ -1,0 +1,52 @@
+# ==========================================
+# FurnIQ Backend — .gitignore
+# ==========================================
+
+# Compiled Outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+package-lock.json.backup
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test & Coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Uploads & Temporary Media
+uploads/
+tmp/
+temp/
+
+# IDE & Editor Specific Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

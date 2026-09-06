@@ -2,11 +2,16 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import './SignUpPage.css'
 
+import { api, setTokens, setUser } from '../services/api'
+import { useToast } from '../context/ToastContext'
+
 function SignUpPage() {
   const navigate = useNavigate()
+  const toast = useToast()
   const [formData, setFormData] = useState({
-    loginId: '',
+    name: '',
     email: '',
+    role: 'ADMIN',
     password: '',
     rePassword: ''
   })
@@ -18,11 +23,9 @@ function SignUpPage() {
   const validate = () => {
     const e = {}
 
-    // Login ID: 6–12 chars, unique (unique check is server-side)
-    if (!formData.loginId.trim())
-      e.loginId = 'Login ID is required'
-    else if (formData.loginId.length < 6 || formData.loginId.length > 12)
-      e.loginId = 'Login ID must be 6–12 characters'
+    // Full name
+    if (!formData.name.trim())
+      e.name = 'Full name is required'
 
     // Email
     if (!formData.email.trim())
@@ -64,11 +67,36 @@ function SignUpPage() {
     setLoading(true)
     setErrors({})
     try {
-      // TODO: POST to /api/auth/signup  (creates a "User" role account)
-      await new Promise(r => setTimeout(r, 800))
-      navigate('/login')
+      const res = await api.auth.register({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        role: formData.role,
+      })
+      if (res?.tokens) setTokens(res.tokens)
+      if (res?.user) setUser(res.user)
+
+      const roleLabels = {
+        ADMIN: 'Administrator',
+        ACCOUNTANT: 'Invoicing User',
+        CONTACT_USER: 'Portal User',
+      }
+      const roleDisplay = roleLabels[formData.role] || formData.role
+
+      toast.success(
+        `Welcome to FurnIQ, ${formData.name.trim()}! Your account was registered as ${roleDisplay}.`,
+        'Registration Successful'
+      )
+
+      if (formData.role === 'CONTACT_USER') {
+        navigate('/portal')
+      } else {
+        navigate('/dashboard')
+      }
     } catch (err) {
-      setErrors({ general: err.message || 'Sign up failed. Please try again.' })
+      const msg = err.message || 'Sign up failed. Please try again.'
+      setErrors({ general: msg })
+      toast.error(msg, 'Registration Failed')
     } finally {
       setLoading(false)
     }
@@ -91,17 +119,33 @@ function SignUpPage() {
         )}
 
         <form onSubmit={handleSubmit} noValidate>
-          {/* Login ID */}
+          {/* Full Name */}
           <div className="form-group">
-            <label className="form-label" htmlFor="loginId">ENTER LOGIN ID</label>
+            <label className="form-label" htmlFor="name">FULL NAME</label>
             <input
-              id="loginId" name="loginId" type="text"
-              className={`form-input${errors.loginId ? ' form-input--error' : ''}`}
-              placeholder="Choose a login ID (6–12 chars)"
-              value={formData.loginId} onChange={handleChange}
-              autoComplete="username"
+              id="name" name="name" type="text"
+              className={`form-input${errors.name ? ' form-input--error' : ''}`}
+              placeholder="e.g. Rajesh Sharma"
+              value={formData.name} onChange={handleChange}
+              autoComplete="name"
             />
-            {errors.loginId && <span className="field-error">{errors.loginId}</span>}
+            {errors.name && <span className="field-error">{errors.name}</span>}
+          </div>
+
+          {/* System Role Selector */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="role">SYSTEM ROLE</label>
+            <select
+              id="role"
+              name="role"
+              className="form-input"
+              value={formData.role}
+              onChange={handleChange}
+            >
+              <option value="ADMIN">Administrator (Business Owner — Full Control)</option>
+              <option value="ACCOUNTANT">Invoicing User (Accountant — Sales, Purchases, Reports)</option>
+              <option value="CONTACT_USER">Customer / Vendor (Contact Portal Access)</option>
+            </select>
           </div>
 
           {/* Email */}

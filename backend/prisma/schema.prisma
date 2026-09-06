@@ -1,0 +1,450 @@
+// Prisma Schema for Urban Furniture Accounting System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------
+// ENUMS
+// --------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  ACCOUNTANT
+  CONTACT_USER
+}
+
+enum ContactType {
+  CUSTOMER
+  VENDOR
+  BOTH
+}
+
+enum ContactStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductType {
+  GOODS
+  SERVICE
+  COMBO
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EXPENSE
+  INCOME
+  CAPITAL
+}
+
+enum AccountStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum JournalType {
+  SALES
+  PURCHASE
+  BANK
+  CASH
+}
+
+enum TransactionStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentType {
+  CUSTOMER_PAYMENT
+  VENDOR_PAYMENT
+}
+
+enum PaymentMethod {
+  CASH
+  BANK
+}
+
+enum AnalyticAccountType {
+  INCOME
+  EXPENSE
+}
+
+// --------------------------------------------------------
+// AUTH & USERS
+// --------------------------------------------------------
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      UserRole @default(ACCOUNTANT)
+  
+  // Optional link for CONTACT_USER role
+  contactId String?  @unique
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// --------------------------------------------------------
+// MASTER DATA: CONTACTS
+// --------------------------------------------------------
+
+model Contact {
+  id           String        @id @default(uuid())
+  name         String
+  type         ContactType   @default(CUSTOMER)
+  email        String?       @unique
+  mobile       String?
+  city         String?
+  state        String?
+  pincode      String?
+  profileImage String?
+  status       ContactStatus @default(ACTIVE)
+
+  user         User?
+  
+  // Relations
+  purchaseOrders   PurchaseOrder[]
+  vendorBills      VendorBill[]
+  salesOrders      SalesOrder[]
+  customerInvoices CustomerInvoice[]
+  payments         Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("contacts")
+}
+
+// --------------------------------------------------------
+// MASTER DATA: PRODUCTS
+// --------------------------------------------------------
+
+model Product {
+  id            String      @id @default(uuid())
+  name          String
+  type          ProductType @default(GOODS)
+  salesPrice    Decimal     @default(0.0) @db.Decimal(12, 2)
+  costPrice     Decimal     @default(0.0) @db.Decimal(12, 2)
+  category      String?
+  image         String?     // Product image / thumbnail (Base64 Data URI or Image URL)
+  stockQuantity Int         @default(0) // Only GOODS affect stock
+
+  // Relations
+  purchaseOrderLines   PurchaseOrderLine[]
+  vendorBillLines      VendorBillLine[]
+  salesOrderLines      SalesOrderLine[]
+  customerInvoiceLines CustomerInvoiceLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("products")
+}
+
+// --------------------------------------------------------
+// ACCOUNTING: CHART OF ACCOUNTS & JOURNALS
+// --------------------------------------------------------
+
+model Account {
+  id     String        @id @default(uuid())
+  name   String        @unique
+  code   String?       @unique
+  type   AccountType
+  status AccountStatus @default(ACTIVE)
+
+  // Relations
+  debitJournalDefaults  Journal[]            @relation("DefaultDebitAccount")
+  creditJournalDefaults Journal[]            @relation("DefaultCreditAccount")
+  journalEntryLines     JournalEntryLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("accounts")
+}
+
+model Journal {
+  id                    String      @id @default(uuid())
+  name                  String      @unique
+  type                  JournalType
+  
+  defaultDebitAccountId String?
+  defaultDebitAccount   Account?    @relation("DefaultDebitAccount", fields: [defaultDebitAccountId], references: [id], onDelete: SetNull)
+
+  defaultCreditAccountId String?
+  defaultCreditAccount   Account?   @relation("DefaultCreditAccount", fields: [defaultCreditAccountId], references: [id], onDelete: SetNull)
+
+  journalEntries JournalEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("journals")
+}
+
+model JournalEntry {
+  id          String             @id @default(uuid())
+  entryNumber String             @unique
+  date        DateTime           @default(now())
+  reference   String?            // Reference to Invoice, Bill, Payment, etc.
+  
+  journalId   String
+  journal     Journal            @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  lines       JournalEntryLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  debit       Decimal @default(0.0) @db.Decimal(12, 2)
+  credit      Decimal @default(0.0) @db.Decimal(12, 2)
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("journal_entry_lines")
+}
+
+// --------------------------------------------------------
+// PURCHASES: PURCHASE ORDER & VENDOR BILL
+// --------------------------------------------------------
+
+model PurchaseOrder {
+  id          String            @id @default(uuid())
+  orderNumber String            @unique
+  vendorId    String
+  vendor      Contact           @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  orderDate   DateTime          @default(now())
+  status      TransactionStatus @default(DRAFT)
+  totalAmount Decimal           @default(0.0) @db.Decimal(12, 2)
+
+  lines       PurchaseOrderLine[]
+  vendorBills VendorBill[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Int     @default(1)
+  unitPrice Decimal @default(0.0) @db.Decimal(12, 2)
+  total     Decimal @default(0.0) @db.Decimal(12, 2)
+
+  @@map("purchase_order_lines")
+}
+
+model VendorBill {
+  id              String            @id @default(uuid())
+  billNumber      String            @unique
+  vendorId        String
+  vendor          Contact           @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder?    @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+
+  billDate   DateTime          @default(now())
+  dueDate    DateTime?
+  status     TransactionStatus @default(DRAFT)
+  totalAmount Decimal          @default(0.0) @db.Decimal(12, 2)
+  paidAmount  Decimal          @default(0.0) @db.Decimal(12, 2)
+
+  lines    VendorBillLine[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("vendor_bills")
+}
+
+model VendorBillLine {
+  id           String     @id @default(uuid())
+  vendorBillId String
+  vendorBill   VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Int     @default(1)
+  unitPrice Decimal @default(0.0) @db.Decimal(12, 2)
+  total     Decimal @default(0.0) @db.Decimal(12, 2)
+
+  @@map("vendor_bill_lines")
+}
+
+// --------------------------------------------------------
+// SALES: SALES ORDER & CUSTOMER INVOICE
+// --------------------------------------------------------
+
+model SalesOrder {
+  id          String            @id @default(uuid())
+  orderNumber String            @unique
+  customerId  String
+  customer    Contact           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  orderDate   DateTime          @default(now())
+  status      TransactionStatus @default(DRAFT)
+  totalAmount Decimal           @default(0.0) @db.Decimal(12, 2)
+
+  lines            SalesOrderLine[]
+  customerInvoices CustomerInvoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sales_orders")
+}
+
+model SalesOrderLine {
+  id           String     @id @default(uuid())
+  salesOrderId String
+  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Int     @default(1)
+  unitPrice Decimal @default(0.0) @db.Decimal(12, 2)
+  tax       Decimal @default(0.0) @db.Decimal(12, 2)
+  total     Decimal @default(0.0) @db.Decimal(12, 2)
+
+  @@map("sales_order_lines")
+}
+
+model CustomerInvoice {
+  id            String            @id @default(uuid())
+  invoiceNumber String            @unique
+  customerId    String
+  customer      Contact           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  
+  salesOrderId  String?
+  salesOrder    SalesOrder?       @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+
+  invoiceDate DateTime          @default(now())
+  dueDate     DateTime?
+  status      TransactionStatus @default(DRAFT)
+  totalAmount Decimal           @default(0.0) @db.Decimal(12, 2)
+  paidAmount  Decimal           @default(0.0) @db.Decimal(12, 2)
+
+  lines    CustomerInvoiceLine[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("customer_invoices")
+}
+
+model CustomerInvoiceLine {
+  id                String          @id @default(uuid())
+  customerInvoiceId String
+  customerInvoice   CustomerInvoice @relation(fields: [customerInvoiceId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Int     @default(1)
+  unitPrice Decimal @default(0.0) @db.Decimal(12, 2)
+  tax       Decimal @default(0.0) @db.Decimal(12, 2)
+  total     Decimal @default(0.0) @db.Decimal(12, 2)
+
+  @@map("customer_invoice_lines")
+}
+
+// --------------------------------------------------------
+// PAYMENTS
+// --------------------------------------------------------
+
+model Payment {
+  id            String        @id @default(uuid())
+  paymentNumber String        @unique
+  type          PaymentType
+  paymentMethod PaymentMethod @default(BANK)
+  amount        Decimal       @db.Decimal(12, 2)
+  paymentDate   DateTime      @default(now())
+  reference     String?
+
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+
+  customerInvoiceId String?
+  customerInvoice   CustomerInvoice? @relation(fields: [customerInvoiceId], references: [id], onDelete: SetNull)
+
+  vendorBillId String?
+  vendorBill   VendorBill? @relation(fields: [vendorBillId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payments")
+}
+
+// --------------------------------------------------------
+// ANALYTIC ACCOUNTS & BUDGETS
+// --------------------------------------------------------
+
+model AnalyticAccount {
+  id   String              @id @default(uuid())
+  name String              @unique
+  type AnalyticAccountType
+
+  budgets Budget[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("analytic_accounts")
+}
+
+model Budget {
+  id                String          @id @default(uuid())
+  name              String
+  analyticAccountId String
+  analyticAccount   AnalyticAccount @relation(fields: [analyticAccountId], references: [id], onDelete: Restrict)
+
+  startDate         DateTime
+  endDate           DateTime
+  responsiblePerson String
+  plannedAmount     Decimal         @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("budgets")
+}

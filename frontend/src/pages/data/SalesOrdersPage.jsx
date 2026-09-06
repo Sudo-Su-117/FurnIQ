@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './DataForms.css'
 
 const CUSTOMERS = ['Ratan Mehra', 'Priya Kapoor', 'Ananya Sharma', 'Mahindra Living', 'Godrej Interio Ltd.']
@@ -18,29 +20,87 @@ const ANALYTICS = ['Furniture Manufacturing', 'Showroom Operations', 'Q3 Marketi
 const STATUS_STYLE = { Draft: 'df-badge--draft', Confirmed: 'df-badge--confirmed', Invoiced: 'df-badge--billed' }
 const fmtINR = (n) => `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
-const INITIAL_ORDERS = [
-  { id: 'S00001', customer: 'Ratan Mehra',    date: '2026-09-01', lines: [], total: 56640,  status: 'Confirmed' },
-  { id: 'S00002', customer: 'Priya Kapoor',   date: '2026-09-03', lines: [], total: 126850, status: 'Invoiced'  },
-  { id: 'S00003', customer: 'Mahindra Living',date: '2026-09-04', lines: [], total: 227440, status: 'Draft'     },
-]
-
 const EMPTY_LINE = { product: '', budgetAnalytics: '', qty: '', unitPrice: '', total: 0 }
 const EMPTY_SO   = { customer: '', date: '', lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }] }
 
-let soCounter = INITIAL_ORDERS.length + 1
-function nextSoId() { return `S${String(soCounter++).padStart(5,'0')}` }
+function getNextSoId(orderList = []) {
+  const year = new Date().getFullYear()
+  const prefix = `SO-${year}-`
+  let maxSeq = 0
+  for (const o of orderList) {
+    const id = o.orderNumber || o.id || ''
+    if (id.startsWith(prefix)) {
+      const num = parseInt(id.replace(prefix, ''), 10)
+      if (!isNaN(num) && num > maxSeq) maxSeq = num
+    }
+  }
+  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`
+}
+
+import { api, extractList } from '../../services/api'
 
 export default function SalesOrdersPage() {
   const navigate = useNavigate()
-  const [orders,    setOrders]    = useState(INITIAL_ORDERS)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [orders,    setOrders]    = useState([])
+  const [loading,   setLoading]   = useState(true)
+  const [customers, setCustomers] = useState([])
+  const [products,  setProducts]  = useState([])
+  const [analytics, setAnalytics] = useState([])
   const [search,    setSearch]    = useState('')
   const [statusFlt, setStatusFlt] = useState('All')
   const [modalOpen, setModalOpen] = useState(false)
   const [editOrder, setEditOrder] = useState(null)
 
+  const loadOrders = useCallback(() => {
+    setLoading(true)
+    Promise.allSettled([
+      api.sales.listOrders({ limit: 100 }),
+      api.contacts.list({ limit: 100, type: 'CUSTOMER' }),
+      api.products.list({ limit: 100 }),
+      api.budgets.getAnalyticAccounts(),
+    ]).then(([ordersRes, custRes, prodRes, analRes]) => {
+      if (ordersRes.status === 'fulfilled') {
+        const list = extractList(ordersRes.value)
+        const mapped = list.map(o => ({
+          ...o,
+          id: o.orderNumber || o.id,
+          rawId: o.id,
+          customer: o.customer?.name || (typeof o.customer === 'string' ? o.customer : 'Customer'),
+          date: o.orderDate ? new Date(o.orderDate).toISOString().split('T')[0] : '2026-09-01',
+          total: Number(o.totalAmount || 0),
+          status: o.status === 'CONFIRMED' ? 'Confirmed' : (o.status === 'PAID' ? 'Invoiced' : 'Draft'),
+          lines: (o.lines || []).map(l => ({
+            product: l.product?.name || (typeof l.product === 'string' ? l.product : ''),
+            productId: l.productId || l.product?.id || '',
+            budgetAnalytics: l.budgetAnalytics?.name || (typeof l.budgetAnalytics === 'string' ? l.budgetAnalytics : ''),
+            qty: l.quantity || l.qty || '',
+            unitPrice: Number(l.unitPrice || 0),
+            total: Number(l.total || (Number(l.quantity || 0) * Number(l.unitPrice || 0)) || 0),
+          }))
+        }))
+        setOrders(mapped)
+      }
+      if (custRes.status === 'fulfilled') {
+        setCustomers(extractList(custRes.value))
+      }
+      if (prodRes.status === 'fulfilled') {
+        setProducts(extractList(prodRes.value))
+      }
+      if (analRes.status === 'fulfilled') {
+        setAnalytics(extractList(analRes.value))
+      }
+    }).finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadOrders()
+  }, [loadOrders])
+
   const filtered = orders.filter(o => {
     const q = search.toLowerCase()
-    return (!search || o.id.toLowerCase().includes(q) || o.customer.toLowerCase().includes(q)) &&
+    return (!search || o.id?.toLowerCase().includes(q) || o.customer?.toLowerCase().includes(q)) &&
            (statusFlt === 'All' || o.status === statusFlt)
   })
 
@@ -50,30 +110,112 @@ export default function SalesOrdersPage() {
   const openEdit = (o) => { setEditOrder(o);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditOrder(null) }
 
-  const handleSave = (data, newStatus) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    if (editOrder) {
-      setOrders(prev => prev.map(o => o.id === editOrder.id ? { ...o, ...data, total, status: newStatus||o.status } : o))
-    } else {
-      setOrders(prev => [...prev, { id: nextSoId(), total, status: newStatus||'Draft', ...data }])
+  const handleSave = async (data, newStatus) => {
+    try {
+      if (editOrder?.rawId) {
+        if (newStatus === 'Confirmed' && editOrder.status !== 'Confirmed') {
+          await api.sales.confirmOrder(editOrder.rawId)
+          toast.success(`Sales Order ${editOrder.id} confirmed!`)
+        } else {
+          toast.success(`Sales Order ${editOrder.id} updated!`)
+        }
+        await loadOrders()
+        close()
+        return
+      }
+
+      const cust = customers.find(c => c.name === data.customer || c.id === data.customer)
+      const customerId = cust?.id || customers[0]?.id
+      let lines = (data.lines || [])
+        .filter(l => (l.product || l.productId) && Number(l.qty) > 0)
+        .map(l => {
+          const prod = products.find(p => p.name === l.product || p.id === l.product)
+          return {
+            productId: prod?.id || products[0]?.id,
+            quantity: Math.max(1, parseInt(l.qty, 10) || 1),
+            unitPrice: Number(l.unitPrice || prod?.salesPrice || 0),
+          }
+        })
+
+      if (lines.length === 0 && products.length > 0) {
+        lines = [{
+          productId: products[0].id,
+          quantity: 1,
+          unitPrice: Number(products[0].salesPrice || 1000),
+        }]
+      }
+
+      const soRes = await api.sales.createOrder({
+        customerId,
+        orderDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+        lines,
+      })
+      if (newStatus === 'Confirmed' && soRes?.id) {
+        await api.sales.confirmOrder(soRes.id)
+        toast.success(`Sales Order ${soRes.orderNumber || 'SO'} confirmed!`)
+      } else {
+        toast.success(`Sales Order ${soRes.orderNumber || 'SO'} created successfully!`)
+      }
+      await loadOrders()
+      close()
+    } catch (err) {
+      toast.error(err.message || 'Failed to save Sales Order')
     }
-    close()
   }
 
-  const handleCreateInvoice = (data) => {
-    const total = data.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
-    const id = editOrder?.id || nextSoId()
-    setOrders(prev => {
-      const exists = prev.find(o => o.id === id)
-      if (exists) return prev.map(o => o.id === id ? { ...o, ...data, total, status: 'Invoiced' } : o)
-      return [...prev, { id, total, status: 'Invoiced', ...data }]
+  const handleCreateInvoice = async (data) => {
+    try {
+      let soId = editOrder?.rawId
+      if (!soId) {
+        const cust = customers.find(c => c.name === data.customer || c.id === data.customer)
+        const customerId = cust?.id || customers[0]?.id
+        let lines = (data.lines || [])
+          .filter(l => (l.product || l.productId) && Number(l.qty) > 0)
+          .map(l => {
+            const prod = products.find(p => p.name === l.product || p.id === l.product)
+            return {
+              productId: prod?.id || products[0]?.id,
+              quantity: Math.max(1, parseInt(l.qty, 10) || 1),
+              unitPrice: Number(l.unitPrice || prod?.salesPrice || 0),
+            }
+          })
+        if (lines.length === 0 && products.length > 0) {
+          lines = [{ productId: products[0].id, quantity: 1, unitPrice: Number(products[0].salesPrice || 1000) }]
+        }
+        const created = await api.sales.createOrder({
+          customerId,
+          orderDate: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
+          lines,
+        })
+        await api.sales.confirmOrder(created.id)
+        soId = created.id
+      } else {
+        if (editOrder.status !== 'Confirmed' && editOrder.status !== 'Invoiced') {
+          await api.sales.confirmOrder(soId)
+        }
+      }
+      await api.sales.createInvoiceFromSO(soId)
+      await loadOrders()
+      close()
+      toast.success('Customer invoice created from Sales Order!')
+      navigate('/dashboard/data/customer-invoices')
+    } catch (err) {
+      toast.error('Error creating invoice from SO: ' + err.message)
+    }
+  }
+
+  const handleDelete = async (id) => {
+    const ok = await confirm({
+      title: 'Delete Sales Order',
+      message: `Are you sure you want to delete sales order "${id}"?`,
+      detail: 'This action will remove the sales order record from the active ledger.',
+      confirmText: 'Delete Order',
+      confirmVariant: 'danger',
     })
-    close()
-    navigate('/dashboard/data/customer-invoices', { state: { fromSO: { ...data, soId: id, total } } })
-  }
-
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this sales order?')) setOrders(prev => prev.filter(o => o.id !== id))
+    if (ok) {
+      setOrders(prev => prev.filter(o => o.id !== id))
+      toast.info(`Sales Order ${id} deleted`)
+    }
   }
 
   return (
@@ -109,13 +251,23 @@ export default function SalesOrdersPage() {
           <Pagination total={totalFiltered} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
-      <SOModal isOpen={modalOpen} onClose={close} onSave={handleSave} onCreateInvoice={handleCreateInvoice} editOrder={editOrder} />
+      <SOModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        onCreateInvoice={handleCreateInvoice}
+        editOrder={editOrder}
+        nextSoId={getNextSoId(orders)}
+        customers={customers}
+        products={products}
+        analytics={analytics}
+      />
     </DashboardLayout>
   )
 }
 
 /* ── Sales Order Modal ── */
-function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
+function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder, nextSoId, customers = [], products = [], analytics = [] }) {
   const [fields,      setFields]      = useState(EMPTY_SO)
   const [errors,      setErrors]      = useState({})
   const [confirmed,   setConfirmed]   = useState(false)
@@ -127,8 +279,20 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
   useEffect(() => {
     if (isOpen) {
       if (editOrder) {
-        setFields({ customer: editOrder.customer||'', date: editOrder.date||'',
-          lines: editOrder.lines?.length ? editOrder.lines.map(l=>({...l})) : [{ ...EMPTY_LINE },{ ...EMPTY_LINE }] })
+        setFields({
+          customer: editOrder.customer?.name || (typeof editOrder.customer === 'string' ? editOrder.customer : ''),
+          date: editOrder.date || '',
+          lines: editOrder.lines?.length
+            ? editOrder.lines.map(l => ({
+                product: l.product?.name || (typeof l.product === 'string' ? l.product : ''),
+                productId: l.productId || l.product?.id || '',
+                budgetAnalytics: l.budgetAnalytics?.name || (typeof l.budgetAnalytics === 'string' ? l.budgetAnalytics : ''),
+                qty: l.qty || l.quantity || '',
+                unitPrice: Number(l.unitPrice || 0),
+                total: Number(l.total || (Number(l.qty || l.quantity || 0) * Number(l.unitPrice || 0)) || 0),
+              }))
+            : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]
+        })
         setConfirmed(editOrder.status === 'Confirmed' || editOrder.status === 'Invoiced')
       } else { setFields(EMPTY_SO); setConfirmed(false) }
       setErrors({})
@@ -145,7 +309,9 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
 
   if (!isOpen) return null
 
-  const totalAmount = fields.lines.reduce((s, l) => s + (Number(l.total)||0), 0)
+  const subtotalUntaxed = fields.lines.reduce((s, l) => s + (Number(l.total) || ((Number(l.qty)||0)*(Number(l.unitPrice)||0))), 0)
+  const taxAmount       = subtotalUntaxed * 0.18
+  const totalAmount     = subtotalUntaxed + taxAmount
 
   const changeField = (name, value) => { setFields(p => ({ ...p, [name]: value })); setErrors(p => ({ ...p, [name]: undefined })) }
 
@@ -160,18 +326,25 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
     }))
   }
 
-  const selectProduct = (idx, prod) => { updateLine(idx,'product',prod.name); updateLine(idx,'unitPrice',prod.unitPrice); setProdDropIdx(null) }
+  const selectProduct = (idx, prod) => { updateLine(idx,'product',prod.name); updateLine(idx,'unitPrice',prod.salesPrice || prod.unitPrice || 0); setProdDropIdx(null) }
   const addLine    = () => setFields(p => ({ ...p, lines: [...p.lines, { ...EMPTY_LINE }] }))
-  const removeLine = (idx) => { if (fields.lines.length > 1) setFields(p => ({ ...p, lines: p.lines.filter((_,i) => i !== idx) })) }
+  const removeLine = (idx) => { if (fields.lines.length > 1) setFields(p => ({ ...p, lines: fields.lines.filter((_,i) => i !== idx) })) }
 
   const validate = () => {
     const e = {}
     if (!fields.customer) e.customer = 'Customer is required'
     if (!fields.date)     e.date     = 'SO date is required'
+    const hasValidLine = fields.lines.some(l => (l.product || l.productId) && Number(l.qty) > 0)
+    if (!hasValidLine) e.lines = 'At least one product line with a valid quantity is required'
     return e
   }
 
-  const soId = editOrder?.id || `S${String(soCounter).padStart(5,'0')}`
+  const soId = editOrder?.id || nextSoId || 'SO-2026-001'
+
+  const custMatches = customers.filter(c => {
+    const name = c.name || c
+    return !fields.customer || name.toLowerCase().includes(fields.customer.toLowerCase())
+  })
 
   return (
     <div className="dfm-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -180,41 +353,36 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
           <div className="dfm-topbar-left">
             <button type="button" className="dfm-btn dfm-btn--new" onClick={() => { setFields(EMPTY_SO); setErrors({}); setConfirmed(false) }}>New</button>
             <button type="button" className={`dfm-btn dfm-btn--confirm${confirmed?' dfm-btn--confirmed':''}`}
-              onClick={() => { const v=validate(); if(Object.keys(v).length){setErrors(v);return}; setConfirmed(true); onSave(fields,'Confirmed') }}>
-              {confirmed?'✓ Confirmed':'Confirm'}
-            </button>
-            <button type="button" className="dfm-btn dfm-btn--action" onClick={() => { const v=validate(); if(Object.keys(v).length){setErrors(v);return}; onCreateInvoice(fields) }}>Create Invoice</button>
+              onClick={() => { const v = validate(); if (!Object.keys(v).length) { setConfirmed(true); onSave(fields,'Confirmed') } else setErrors(v) }}>Confirm</button>
+            <button type="button" className="dfm-btn dfm-btn--create-inv"
+              onClick={() => { const v = validate(); if (!Object.keys(v).length) onCreateInvoice(fields); else setErrors(v) }}>Create Invoice</button>
           </div>
-          <div className="dfm-topbar-right">
-            <button type="button" className="dfm-btn dfm-btn--cancel" onClick={() => { setFields(EMPTY_SO); setErrors({}); setConfirmed(false) }}>Cancel</button>
-            <button type="button" className="dfm-btn dfm-btn--back" onClick={onClose}>Back</button>
-            <button type="button" className="dfm-close" onClick={onClose}><XIcon /></button>
-          </div>
+          <button type="button" className="dfm-close-btn" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
-        <h2 className="dfm-title">{editOrder ? `Edit ${editOrder.id}` : 'New Sales Order'}</h2>
-
         <div className="dfm-body">
-          {/* SO No */}
-          <div className="dfm-field">
-            <label className="dfm-lbl">SO No.</label>
-            <div className="dfm-input-wrap"><span className="dfm-readonly">{soId}</span></div>
+          <div className="dfm-header-info">
+            <div className="dfm-doc-id">{soId}</div>
+            <span className={`df-badge ${confirmed?'df-badge--confirmed':'df-badge--draft'}`}>{confirmed?'Confirmed':'Draft'}</span>
           </div>
 
-          {/* Customer Name */}
           <div className="dfm-field">
-            <label className="dfm-lbl">Customer Name</label>
-            <div className="dfm-input-wrap dfm-dropdown-wrap">
+            <label className="dfm-lbl">
+              Customer <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
+            <div className="dfm-input-wrap" style={{position:'relative'}}>
               <input ref={firstRef} type="text" className={`dfm-input${errors.customer?' dfm-input--err':''}`}
-                placeholder="Select customer... (from Contact Master)"
-                value={fields.customer}
+                placeholder="Search customer..." value={fields.customer}
                 onChange={e => { changeField('customer', e.target.value); setCustDrop(true) }}
-                onFocus={() => setCustDrop(true)} autoComplete="off" />
-              {custDrop && (
+                onClick={() => setCustDrop(true)} autoComplete="off" />
+              {custDrop && custMatches.length > 0 && (
                 <div className="dfm-dropdown">
-                  {CUSTOMERS.filter(c => c.toLowerCase().includes(fields.customer.toLowerCase())).map(c => (
-                    <button key={c} type="button" className="dfm-drop-opt" onMouseDown={() => { changeField('customer',c); setCustDrop(false) }}>{c}</button>
-                  ))}
+                  {custMatches.map(c => {
+                    const cName = c.name || c
+                    return (
+                      <button key={c.id || cName} type="button" className="dfm-drop-opt" onMouseDown={() => { changeField('customer', cName); setCustDrop(false) }}>{cName}</button>
+                    )
+                  })}
                 </div>
               )}
               {errors.customer && <span className="dfm-err">{errors.customer}</span>}
@@ -222,9 +390,10 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
             </div>
           </div>
 
-          {/* SO Date */}
           <div className="dfm-field">
-            <label className="dfm-lbl">SO Date</label>
+            <label className="dfm-lbl">
+              SO Date <span style={{ color: 'var(--error)' }}>*</span>
+            </label>
             <div className="dfm-input-wrap">
               <input type="date" className={`dfm-input${errors.date?' dfm-input--err':''}`}
                 value={fields.date} onChange={e => changeField('date', e.target.value)} />
@@ -232,7 +401,6 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
             </div>
           </div>
 
-          {/* Line items */}
           <div className="dfm-lines-section">
             <div className="dfm-lines-title">SO Entry</div>
             <table className="dfm-lines-table">
@@ -249,38 +417,50 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
               </thead>
               <tbody>
                 {fields.lines.map((line, idx) => {
-                  const prodOpts = PRODUCTS.filter(p => !line.product || p.name.toLowerCase().includes(line.product.toLowerCase()))
-                  const analOpts = ANALYTICS.filter(a => !line.budgetAnalytics || a.toLowerCase().includes(line.budgetAnalytics.toLowerCase()))
+                  const prodVal = typeof line.product === 'object' ? (line.product?.name || '') : (line.product || '')
+                  const analVal = typeof line.budgetAnalytics === 'object' ? (line.budgetAnalytics?.name || '') : (line.budgetAnalytics || '')
+                  const prodOpts = products.filter(p => !prodVal || (p.name && p.name.toLowerCase().includes(prodVal.toLowerCase())))
+                  const analOpts = analytics.filter(a => {
+                    const aName = a.name || a || ''
+                    return !analVal || (typeof aName === 'string' && aName.toLowerCase().includes(analVal.toLowerCase()))
+                  })
                   return (
                     <tr key={idx} className="dfm-line-row">
-                      <td className="dfm-line-td dfm-line-idx">{idx+1}</td>
-                      {/* Product */}
-                      <td className="dfm-line-td" style={{position:'relative'}}>
+                       <td className="dfm-line-td dfm-line-idx">{idx+1}</td>
+                      <td className={`dfm-line-td${prodDropIdx===idx?' dfm-line-td--active':''}`} style={{position:'relative', zIndex: prodDropIdx===idx?1100:'auto'}}>
                         <input type="text" className="dfm-line-input" placeholder="Product..."
-                          value={line.product}
+                          value={prodVal}
                           onChange={e => { updateLine(idx,'product',e.target.value); setProdDropIdx(idx) }}
                           onFocus={() => setProdDropIdx(idx)} autoComplete="off" />
                         {prodDropIdx===idx && prodOpts.length>0 && (
                           <div className="dfm-line-dropdown">
+                            <div className="dfm-line-dropdown-header">Available Products ({prodOpts.length})</div>
                             {prodOpts.map(p => (
-                              <button key={p.name} type="button" className="dfm-line-opt" onMouseDown={() => selectProduct(idx,p)}>
-                                <span>{p.name}</span><span className="dfm-opt-price">{fmtINR(p.unitPrice)}</span>
+                              <button key={p.id || p.name} type="button" className="dfm-line-opt" onMouseDown={() => selectProduct(idx,p)}>
+                                <span className="dfm-opt-name">{p.name}</span>
+                                <span className="dfm-opt-price">{fmtINR(p.salesPrice || p.unitPrice)}</span>
                               </button>
                             ))}
                           </div>
                         )}
                       </td>
-                      {/* Budget Analytics */}
-                      <td className="dfm-line-td" style={{position:'relative'}}>
+                      <td className={`dfm-line-td${analDropIdx===idx?' dfm-line-td--active':''}`} style={{position:'relative', zIndex: analDropIdx===idx?1100:'auto'}}>
                         <input type="text" className="dfm-line-input" placeholder="Analytics..."
-                          value={line.budgetAnalytics}
+                          value={analVal}
                           onChange={e => { updateLine(idx,'budgetAnalytics',e.target.value); setAnalDropIdx(idx) }}
                           onFocus={() => setAnalDropIdx(idx)} autoComplete="off" />
                         {analDropIdx===idx && analOpts.length>0 && (
                           <div className="dfm-line-dropdown">
-                            {analOpts.map(a => (
-                              <button key={a} type="button" className="dfm-line-opt" onMouseDown={() => { updateLine(idx,'budgetAnalytics',a); setAnalDropIdx(null) }}>{a}</button>
-                            ))}
+                            <div className="dfm-line-dropdown-header">Analytic Accounts ({analOpts.length})</div>
+                            {analOpts.map(a => {
+                              const aName = a.name || a
+                              return (
+                                <button key={a.id || aName} type="button" className="dfm-line-opt" onMouseDown={() => { updateLine(idx,'budgetAnalytics',aName); setAnalDropIdx(null) }}>
+                                  <span className="dfm-opt-name">{aName}</span>
+                                  {a.type && <span className="dfm-opt-code">{a.type}</span>}
+                                </button>
+                              )
+                            })}
                           </div>
                         )}
                       </td>
@@ -294,12 +474,23 @@ function SOModal({ isOpen, onClose, onSave, onCreateInvoice, editOrder }) {
               </tbody>
               <tfoot>
                 <tr className="dfm-total-row">
-                  <td colSpan={5} className="dfm-total-label">Total</td>
+                  <td colSpan={5} className="dfm-total-label">Subtotal (Untaxed)</td>
+                  <td className="dfm-total-val">{fmtINR(subtotalUntaxed)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row">
+                  <td colSpan={5} className="dfm-total-label" style={{ color: '#856404' }}>Taxes (18% GST)</td>
+                  <td className="dfm-total-val" style={{ color: '#856404' }}>{fmtINR(taxAmount)}</td>
+                  <td />
+                </tr>
+                <tr className="dfm-total-row" style={{ fontWeight: 700, fontSize: '15px' }}>
+                  <td colSpan={5} className="dfm-total-label">Total Amount</td>
                   <td className="dfm-total-val">{fmtINR(totalAmount)}</td>
                   <td />
                 </tr>
               </tfoot>
             </table>
+            {errors.lines && <span className="dfm-err" style={{ marginTop: 8, fontSize: '12px', fontWeight: 600 }}>{errors.lines}</span>}
             <button type="button" className="dfm-add-line-btn" onClick={addLine}><PlusSmIcon /> Add Line</button>
           </div>
         </div>

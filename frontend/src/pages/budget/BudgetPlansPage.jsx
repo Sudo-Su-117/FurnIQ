@@ -1,24 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './BudgetPlansPage.css'
 
-/* ── Analytic accounts for linking ── */
-const ANALYTIC_OPTIONS = [
-  { id: 'AA-001', name: 'Furniture Manufacturing',    type: 'Budget'    },
-  { id: 'AA-002', name: 'Showroom Operations',         type: 'Budget'    },
-  { id: 'AA-003', name: 'Q3 Marketing Campaign',       type: 'Short Body'},
-  { id: 'AA-004', name: 'Warehouse Expansion Phase 1', type: 'Committed' },
-  { id: 'AA-005', name: 'Sales Target – FY26',         type: 'Achieved'  },
-  { id: 'AA-006', name: 'Staff Training Q4',           type: 'End Body'  },
-]
+import { api, extractList } from '../../services/api'
 
-const BUDGET_STATUSES = ['Draft', 'Confirmed', 'Cancelled', 'Installed']
+const BUDGET_STATUSES = ['Draft', 'Confirmed', 'Cancelled', 'Closed']
 
 const STATUS_STYLE = {
   Draft:     'bp-status--draft',
   Confirmed: 'bp-status--confirmed',
   Cancelled: 'bp-status--cancelled',
-  Installed: 'bp-status--installed',
+  Closed:    'bp-status--closed',
+  Done:      'bp-status--closed',
 }
 
 const EMPTY_LINE = { analyticId: '', analyticName: '', type: '', committedAmount: '', allowedAmount: '', allowedPct: '', amountToBudget: '' }
@@ -31,41 +26,33 @@ const EMPTY_PLAN = {
 const fmt   = (n) => n ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
 const fmtPct= (n) => n ? `${n}%` : '—'
 
-let planCounter = 3
-function nextPlanId() { return `BP-${String(planCounter++).padStart(3,'0')}` }
-
-const INITIAL_PLANS = [
-  {
-    id: 'BP-001', name: 'Annual Budget FY 2026-27',
-    startDate: '2026-04-01', endDate: '2027-03-31',
-    status: 'Confirmed', responsible: 'Vikram',
-    lines: [
-      { analyticId: 'AA-001', analyticName: 'Furniture Manufacturing', type: 'Budget',    committedAmount: 500000, allowedAmount: 450000, allowedPct: 90, amountToBudget: 50000 },
-      { analyticId: 'AA-002', analyticName: 'Showroom Operations',      type: 'Budget',    committedAmount: 300000, allowedAmount: 270000, allowedPct: 90, amountToBudget: 30000 },
-      { analyticId: 'AA-004', analyticName: 'Warehouse Expansion',      type: 'Committed', committedAmount: 750000, allowedAmount: 600000, allowedPct: 80, amountToBudget: 150000 },
-    ]
-  },
-  {
-    id: 'BP-002', name: 'Q3 Marketing Plan',
-    startDate: '2026-07-01', endDate: '2026-09-30',
-    status: 'Draft', responsible: 'Priya Kapoor',
-    lines: [
-      { analyticId: 'AA-003', analyticName: 'Q3 Marketing Campaign', type: 'Short Body', committedAmount: 120000, allowedAmount: 100000, allowedPct: 83, amountToBudget: 20000 },
-    ]
-  },
-]
+function getNextPlanId(existingPlans = []) {
+  const year = new Date().getFullYear()
+  const prefix = `BP-${year}-`
+  let maxSeq = 0
+  for (const p of existingPlans) {
+    const id = p.id || ''
+    if (id.startsWith(prefix)) {
+      const num = parseInt(id.replace(prefix, ''), 10)
+      if (!isNaN(num) && num > maxSeq) maxSeq = num
+    }
+  }
+  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`
+}
 
 function validate(f) {
   const e = {}
-  if (!f.name.trim())      e.name      = 'Budget name is required.'
-  if (!f.startDate)        e.startDate = 'Start date is required.'
-  if (!f.endDate)          e.endDate   = 'End date is required.'
+  if (!f.name.trim()) e.name = 'Budget name is required.'
+  if (!f.startDate) e.startDate = 'Start date is required.'
+  if (!f.endDate) e.endDate = 'End date is required.'
   if (f.startDate && f.endDate && f.startDate >= f.endDate) e.endDate = 'End date must be after start date.'
+  const hasValidLine = f.lines.some(l => l.analyticName || l.analyticId)
+  if (!hasValidLine) e.lines = 'At least one budget line with an analytic account is required.'
   return e
 }
 
 /* ─── Budget Plan Modal ─── */
-function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
+function BudgetPlanModal({ isOpen, onClose, onSave, editPlan, analyticOptions = [] }) {
   const [fields,    setFields]    = useState(EMPTY_PLAN)
   const [errors,    setErrors]    = useState({})
   const [confirmed, setConfirmed] = useState(false)
@@ -120,7 +107,6 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
   const updateLine = (idx, field, value) => {
     setFields(p => ({ ...p, lines: p.lines.map((l,i) => i === idx ? { ...l, [field]: value } : l) }))
     setConfirmed(false)
-    /* auto-calc amountToBudget if committedAmount and allowedPct are set */
   }
 
   const selectAnalytic = (idx, acct) => {
@@ -150,7 +136,7 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
     if (Object.keys(v).length) { setErrors(v); return }
     onSave({
       ...fields,
-      lines: fields.lines.filter(l => l.analyticName).map(l => ({
+      lines: fields.lines.filter(l => l.analyticName || l.analyticId).map(l => ({
         ...l,
         committedAmount: Number(l.committedAmount) || 0,
         allowedAmount:   Number(l.allowedAmount)   || 0,
@@ -187,7 +173,9 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
           {/* ─ Header fields ─ */}
           <div className="bpm-header-fields">
             <div className="bpm-field">
-              <label className="bpm-lbl" htmlFor="bpm-name">Budget Name</label>
+              <label className="bpm-lbl" htmlFor="bpm-name">
+                Budget Name <span style={{ color: 'var(--error)' }}>*</span>
+              </label>
               <div className="bpm-input-wrap">
                 <input ref={firstRef} id="bpm-name" name="name" type="text"
                   className={`bpm-input${errors.name ? ' bpm-input--err' : ''}`}
@@ -199,7 +187,9 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
 
             <div className="bpm-field-row">
               <div className="bpm-field bpm-field--half">
-                <label className="bpm-lbl" htmlFor="bpm-start">Start Date</label>
+                <label className="bpm-lbl" htmlFor="bpm-start">
+                  Start Date <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="bpm-input-wrap">
                   <input id="bpm-start" name="startDate" type="date"
                     className={`bpm-input${errors.startDate ? ' bpm-input--err' : ''}`}
@@ -208,7 +198,9 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
                 </div>
               </div>
               <div className="bpm-field bpm-field--half">
-                <label className="bpm-lbl" htmlFor="bpm-end">End Date</label>
+                <label className="bpm-lbl" htmlFor="bpm-end">
+                  End Date <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="bpm-input-wrap">
                   <input id="bpm-end" name="endDate" type="date"
                     className={`bpm-input${errors.endDate ? ' bpm-input--err' : ''}`}
@@ -246,7 +238,6 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
               <thead>
                 <tr>
                   <th>Analytics</th>
-                  <th>Type</th>
                   <th className="align-right">Committed Amt</th>
                   <th className="align-right">Allowed Amt</th>
                   <th className="align-right">Allowed %</th>
@@ -256,13 +247,13 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
               </thead>
               <tbody>
                 {fields.lines.map((line, idx) => {
-                  const opts = ANALYTIC_OPTIONS.filter(a =>
+                  const opts = analyticOptions.filter(a =>
                     !analyticSearch[idx] || a.name.toLowerCase().includes((analyticSearch[idx]||'').toLowerCase())
                   )
                   return (
                     <tr key={idx} className="bpm-line-row">
                       {/* Analytics */}
-                      <td className="bpm-line-td" style={{position:'relative'}}>
+                      <td className="bpm-line-td bpm-line-td--analytics" style={{position:'relative'}}>
                         <input type="text" className="bpm-line-input"
                           placeholder="Select analytic..."
                           value={analyticSearch[idx] || ''}
@@ -272,10 +263,12 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
                             setAnalyticDropIdx(idx)
                           }}
                           onFocus={() => setAnalyticDropIdx(idx)}
+                          onBlur={() => setTimeout(() => setAnalyticDropIdx(null), 250)}
                           autoComplete="off"
                         />
                         {analyticDropIdx === idx && opts.length > 0 && (
                           <div className="bpm-line-dropdown">
+                            <div className="bpm-line-dropdown-header">Available Analytic Accounts</div>
                             {opts.map(a => (
                               <button key={a.id} type="button" className="bpm-line-opt"
                                 onMouseDown={() => selectAnalytic(idx, a)}>
@@ -285,10 +278,6 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
                             ))}
                           </div>
                         )}
-                      </td>
-                      {/* Type (auto-filled) */}
-                      <td className="bpm-line-td">
-                        <span className="bpm-line-type">{line.type || '—'}</span>
                       </td>
                       {/* Committed */}
                       <td className="bpm-line-td">
@@ -327,7 +316,7 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
               </tbody>
               <tfoot>
                 <tr className="bpm-totals-row">
-                  <td colSpan={2} className="bpm-totals-label">Totals</td>
+                  <td className="bpm-totals-label">Totals</td>
                   <td className="bpm-total-val">{fmt(fields.lines.reduce((s,l)=>s+(Number(l.committedAmount)||0),0))}</td>
                   <td className="bpm-total-val">{fmt(fields.lines.reduce((s,l)=>s+(Number(l.allowedAmount)||0),0))}</td>
                   <td className="bpm-total-val">—</td>
@@ -336,6 +325,7 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
                 </tr>
               </tfoot>
             </table>
+            {errors.lines && <span className="bpm-err" style={{ marginTop: 8, fontSize: '12px', fontWeight: 600 }}>{errors.lines}</span>}
             <button type="button" className="bpm-add-line-btn" onClick={addLine}>
               <PlusSmIcon /> Add Line
             </button>
@@ -353,15 +343,67 @@ function BudgetPlanModal({ isOpen, onClose, onSave, editPlan }) {
 
 /* ─── Budget Plans Page ─── */
 export default function BudgetPlansPage() {
-  const [plans,      setPlans]      = useState(INITIAL_PLANS)
-  const [search,     setSearch]     = useState('')
-  const [statusFlt,  setStatusFlt]  = useState('All')
-  const [modalOpen,  setModalOpen]  = useState(false)
-  const [editPlan,   setEditPlan]   = useState(null)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [plans,           setPlans]           = useState([])
+  const [analyticOptions, setAnalyticOptions] = useState([])
+  const [loading,         setLoading]         = useState(false)
+  const [search,          setSearch]          = useState('')
+  const [statusFlt,       setStatusFlt]       = useState('All')
+  const [modalOpen,       setModalOpen]       = useState(false)
+  const [editPlan,        setEditPlan]        = useState(null)
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [budgetsRes, analyticsRes] = await Promise.allSettled([
+        api.budgets.listBudgets({ limit: 100 }),
+        api.budgets.getAnalyticAccounts(),
+      ])
+
+      if (analyticsRes.status === 'fulfilled') {
+        setAnalyticOptions(extractList(analyticsRes.value))
+      }
+
+      if (budgetsRes.status === 'fulfilled') {
+        const list = extractList(budgetsRes.value)
+        const year = new Date().getFullYear()
+        const mapped = list.map((b, idx) => ({
+          id: `BP-${year}-${String(idx + 1).padStart(3, '0')}`,
+          rawId: b.id,
+          name: b.name,
+          startDate: b.startDate ? b.startDate.substring(0, 10) : '',
+          endDate: b.endDate ? b.endDate.substring(0, 10) : '',
+          responsible: b.responsiblePerson || 'Admin',
+          status: 'Confirmed',
+          lines: [
+            {
+              analyticId: b.analyticAccountId,
+              analyticName: b.analyticAccount?.name || 'General Operations',
+              type: b.analyticAccount?.type || 'Expense',
+              committedAmount: b.plannedAmount || 0,
+              allowedAmount: b.plannedAmount || 0,
+              allowedPct: 100,
+              amountToBudget: b.plannedAmount || 0,
+            }
+          ]
+        }))
+        setPlans(mapped)
+      }
+    } catch (err) {
+      console.error('Failed to load budget plans', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
 
   const filtered = plans.filter(p => {
     const q = search.toLowerCase()
-    const ms = !search || p.name.toLowerCase().includes(q) || p.responsible.toLowerCase().includes(q)
+    const ms = !search || p.name.toLowerCase().includes(q) || (p.responsible && p.responsible.toLowerCase().includes(q))
     const mf = statusFlt === 'All' || p.status === statusFlt
     return ms && mf
   })
@@ -370,17 +412,51 @@ export default function BudgetPlansPage() {
   const openEdit = (p) => { setEditPlan(p);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false); setEditPlan(null) }
 
-  const handleSave = (data) => {
-    if (editPlan) {
-      setPlans(prev => prev.map(p => p.id === editPlan.id ? { ...p, ...data } : p))
-    } else {
-      setPlans(prev => [...prev, { id: nextPlanId(), ...data }])
+  const handleSave = async (data) => {
+    try {
+      const validLines = data.lines.filter(l => l.analyticId || l.analyticName)
+      if (validLines.length === 0 && analyticOptions.length > 0) {
+        validLines.push({
+          analyticId: analyticOptions[0].id,
+          analyticName: analyticOptions[0].name,
+          amountToBudget: 10000,
+        })
+      }
+
+      for (const line of validLines) {
+        const analyticId = line.analyticId || analyticOptions.find(a => a.name.toLowerCase() === line.analyticName.toLowerCase())?.id || analyticOptions[0]?.id
+        if (analyticId) {
+          await api.budgets.createBudget({
+            name: validLines.length > 1 ? `${data.name} - ${line.analyticName}` : data.name,
+            analyticAccountId: analyticId,
+            startDate: new Date(data.startDate).toISOString(),
+            endDate: new Date(data.endDate).toISOString(),
+            responsiblePerson: data.responsible || 'Budget Manager',
+            plannedAmount: Number(line.amountToBudget || line.allowedAmount || line.committedAmount || 0),
+          })
+        }
+      }
+      await loadData()
+      toast.success(editPlan ? 'Budget plan updated successfully!' : `Budget plan "${data.name}" created successfully!`)
+      close()
+    } catch (err) {
+      console.error('Failed to save budget plan', err)
+      toast.error(err.message || 'Failed to save budget plan')
     }
-    close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this budget plan?')) setPlans(prev => prev.filter(p => p.id !== id))
+  const handleDelete = async (id, name) => {
+    const ok = await confirm({
+      title: 'Delete Budget Plan',
+      message: `Are you sure you want to delete budget plan "${name || id}"?`,
+      detail: 'This will remove the planned expenditure allocations for this period.',
+      confirmText: 'Delete Plan',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      setPlans(prev => prev.filter(p => p.id !== id))
+      toast.info(`Budget plan ${id} deleted`)
+    }
   }
 
   /* Summary counts */
@@ -394,7 +470,7 @@ export default function BudgetPlansPage() {
         <div className="bp-header">
           <div>
             <h1 className="bp-title">Budget Plans</h1>
-            <p className="bp-subtitle">{plans.length} plans configured</p>
+            <p className="bp-subtitle">{loading ? 'Loading...' : `${plans.length} plans configured`}</p>
           </div>
           <div className="bp-header-right">
             <div className="bp-search-wrap">
@@ -423,7 +499,7 @@ export default function BudgetPlansPage() {
         {/* Plans list */}
         <div className="bp-list">
           {filtered.length === 0
-            ? <div className="bp-empty">No budget plans found.</div>
+            ? <div className="bp-empty">{loading ? 'Loading budget plans from backend...' : 'No budget plans found.'}</div>
             : filtered.map(plan => (
               <div key={plan.id} className="bp-plan-card">
                 <div className="bp-plan-header">
@@ -440,7 +516,7 @@ export default function BudgetPlansPage() {
                   </div>
                   <div className="bp-plan-actions">
                     <button className="bp-edit-btn" onClick={() => openEdit(plan)}>Edit</button>
-                    <button className="bp-del-btn"  onClick={() => handleDelete(plan.id)}>Delete</button>
+                    <button className="bp-del-btn"  onClick={() => handleDelete(plan.id, plan.name)}>Delete</button>
                   </div>
                 </div>
 
@@ -451,7 +527,6 @@ export default function BudgetPlansPage() {
                       <thead>
                         <tr>
                           <th>Analytics</th>
-                          <th>Type</th>
                           <th className="align-right">Committed</th>
                           <th className="align-right">Allowed</th>
                           <th className="align-right">Allowed %</th>
@@ -462,7 +537,6 @@ export default function BudgetPlansPage() {
                         {plan.lines.map((l,i) => (
                           <tr key={i} className={`bp-preview-row${i%2===1?' bp-preview-row--alt':''}`}>
                             <td className="bp-preview-analytic">{l.analyticName}</td>
-                            <td><span className={`bp-line-type-badge bp-ltype--${(l.type||'').toLowerCase().replace(/\s+/g,'-')}`}>{l.type||'—'}</span></td>
                             <td className="align-right bp-preview-num">{fmt(l.committedAmount)}</td>
                             <td className="align-right bp-preview-num">{fmt(l.allowedAmount)}</td>
                             <td className="align-right">{fmtPct(l.allowedPct)}</td>
@@ -481,7 +555,13 @@ export default function BudgetPlansPage() {
         <div className="bp-footer-count">Showing {filtered.length} of {plans.length} plans</div>
       </div>
 
-      <BudgetPlanModal isOpen={modalOpen} onClose={close} onSave={handleSave} editPlan={editPlan} />
+      <BudgetPlanModal
+        isOpen={modalOpen}
+        onClose={close}
+        onSave={handleSave}
+        editPlan={editPlan}
+        analyticOptions={analyticOptions}
+      />
     </DashboardLayout>
   )
 }

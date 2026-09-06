@@ -1,83 +1,144 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
+import { getUser } from '../services/api'
 import './DashboardLayout.css'
-
-const NAV = [
-  {
-    label: 'Home',
-    icon: <HomeIcon />,
-    path: '/dashboard',
-    single: true
-  },
-  {
-    label: 'Sales',
-    icon: <SalesIcon />,
-    children: [
-      { label: 'Sales Orders', path: '/dashboard/sales/orders' },
-      { label: 'Customer Invoices', path: '/dashboard/sales/invoices' },
-      { label: 'Invoice Payments', path: '/dashboard/sales/payments' }
-    ]
-  },
-
-  {
-    label: 'Master Data',
-    icon: <MasterIcon />,
-    children: [
-      { label: 'Contacts', path: '/dashboard/master/contacts' },
-      { label: 'Products', path: '/dashboard/master/products' },
-      { label: 'Chart of Accounts', path: '/dashboard/master/coa' },
-      { label: 'Journals', path: '/dashboard/master/journals' },
-      { label: 'Journal Entries', path: '/dashboard/master/journal-entries' }
-    ]
-  },
-  {
-    label: 'Budget',
-    icon: <BudgetIcon />,
-    children: [
-      { label: 'Analytic Accounts', path: '/dashboard/budget/analytics' },
-      { label: 'Budget Plans',      path: '/dashboard/budget/plans'     },
-      { label: 'Budget Reports',    path: '/dashboard/budget'           }
-    ]
-  },
-  {
-    label: 'Data Input',
-    icon: <DataIcon />,
-    children: [
-      { label: 'Sales Orders',       path: '/dashboard/data/sales-orders'      },
-      { label: 'Customer Invoices',   path: '/dashboard/data/customer-invoices'  },
-      { label: 'Invoice Payments',    path: '/dashboard/data/invoice-payments'   },
-      { label: 'Purchase Orders',     path: '/dashboard/data/purchase-orders'    },
-      { label: 'Vendor Bills',        path: '/dashboard/data/vendor-bills'       },
-      { label: 'Payments',            path: '/dashboard/data/payments'           },
-    ]
-  },
-  {
-    label: 'Reports',
-    icon: <ReportIcon />,
-    children: [
-      { label: 'Financial Reports', path: '/dashboard/reports/financial' }
-    ]
-  },
-  {
-    label: 'Customer Portal',
-    icon: <PortalIcon />,
-    path: '/portal',
-    single: true
-  }
-]
 
 export default function DashboardLayout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const [openSections, setOpenSections] = useState({ 'Sales': true, 'Master Data': true })
+  const toast = useToast()
+  const { user, role, logout } = useAuth()
+
+  const effectiveUser = user || getUser()
+  const effectiveRole = effectiveUser?.role || role || 'ACCOUNTANT'
+  const isAdmin = effectiveRole === 'ADMIN'
+
+  // Protect dashboard: Redirect CONTACT_USER immediately to /portal
+  useEffect(() => {
+    if (effectiveRole === 'CONTACT_USER') {
+      navigate('/portal', { replace: true })
+    }
+  }, [effectiveRole, navigate])
+
+  const isActive = (path) => location.pathname === path
+  const isSectionActive = (children) =>
+    children?.some(c => location.pathname.startsWith(c.path))
+
+  const navItems = [
+    {
+      label: 'Home',
+      icon: <HomeIcon />,
+      path: '/dashboard',
+      single: true
+    },
+    {
+      label: 'Sales',
+      icon: <SalesIcon />,
+      children: [
+        { label: 'Sales Orders', path: '/dashboard/sales/orders' },
+        { label: 'Customer Invoices', path: '/dashboard/sales/invoices' },
+        { label: 'Invoice Payments', path: '/dashboard/sales/payments' }
+      ]
+    },
+    {
+      label: 'Purchase',
+      icon: <PurchaseIcon />,
+      children: [
+        { label: 'Purchase Orders', path: '/dashboard/purchase/orders' },
+        { label: 'Vendor Bills', path: '/dashboard/purchase/bills' },
+      ]
+    },
+    {
+      label: 'Master Data',
+      icon: <MasterIcon />,
+      children: [
+        { label: 'Contacts', path: '/dashboard/master/contacts' },
+        { label: 'Products', path: '/dashboard/master/products' },
+        { label: 'Chart of Accounts', path: '/dashboard/master/coa' },
+        { label: 'Journals', path: '/dashboard/master/journals' },
+        { label: 'Journal Entries', path: '/dashboard/master/journal-entries' }
+      ]
+    },
+    {
+      label: 'Budget',
+      icon: <BudgetIcon />,
+      children: [
+        { label: 'Analytic Accounts', path: '/dashboard/budget/analytics' },
+        { label: 'Budget Plans',      path: '/dashboard/budget/plans'     },
+        { label: 'Budget Reports',    path: '/dashboard/budget'           }
+      ]
+    },
+    {
+      label: 'Data Input',
+      icon: <DataIcon />,
+      children: [
+        { label: 'Sales Orders',       path: '/dashboard/data/sales-orders'      },
+        { label: 'Customer Invoices',   path: '/dashboard/data/customer-invoices'  },
+        { label: 'Invoice Payments',    path: '/dashboard/data/invoice-payments'   },
+        { label: 'Purchase Orders',     path: '/dashboard/data/purchase-orders'    },
+        { label: 'Vendor Bills',        path: '/dashboard/data/vendor-bills'       },
+        { label: 'Payments',            path: '/dashboard/data/payments'           },
+      ]
+    },
+    {
+      label: 'Reports',
+      icon: <ReportIcon />,
+      children: [
+        { label: 'Financial Reports', path: '/dashboard/reports/financial' }
+      ]
+    },
+    {
+      label: 'Customer Portal',
+      icon: <PortalIcon />,
+      path: '/portal',
+      single: true
+    },
+    // User Management only available for Administrator
+    ...(isAdmin ? [{
+      label: 'User Management',
+      icon: <UsersIcon />,
+      path: '/admin/create-user',
+      single: true
+    }] : [])
+  ]
+
+  // Identify which collapsible menu group (if any) contains the current active route
+  const getActiveSectionLabel = useCallback((pathname) => {
+    for (const item of navItems) {
+      if (item.children?.some(c => pathname === c.path || (c.path !== '/dashboard' && pathname.startsWith(c.path)))) {
+        return item.label
+      }
+    }
+    return null
+  }, [isAdmin])
+
+  // Open only the section containing the current page on load/route change; close all others
+  const [openSections, setOpenSections] = useState(() => {
+    const active = getActiveSectionLabel(location.pathname)
+    return active ? { [active]: true } : {}
+  })
+
+  // Automatically keep only the current route's menu open on navigation, and close others
+  useEffect(() => {
+    const active = getActiveSectionLabel(location.pathname)
+    setOpenSections(active ? { [active]: true } : {})
+  }, [location.pathname, getActiveSectionLabel])
 
   const toggleSection = (label) => {
     setOpenSections(prev => ({ ...prev, [label]: !prev[label] }))
   }
 
-  const isActive = (path) => location.pathname === path
-  const isSectionActive = (children) =>
-    children?.some(c => location.pathname.startsWith(c.path))
+  const userName = effectiveUser?.name || (isAdmin ? 'Rajesh Sharma' : 'Priya Nair')
+  const userRoleLabel = isAdmin ? 'Administrator' : 'Invoicing User'
+  const userInitial = userName.charAt(0).toUpperCase()
+
+  const handleLogout = () => {
+    logout()
+    toast.info('You have been signed out successfully. Have a wonderful day!', 'Signed Out')
+    navigate('/login')
+  }
 
   return (
     <div className="dl-root">
@@ -88,13 +149,13 @@ export default function DashboardLayout({ children }) {
           <div className="dl-logo-box">F</div>
           <div className="dl-logo-text">
             <span className="dl-logo-name">FurnIQ</span>
-            <span className="dl-logo-sub">Accounting</span>
+            <span className="dl-logo-sub">Accounting · {isAdmin ? 'Admin' : 'Accountant'}</span>
           </div>
         </div>
 
         {/* Navigation */}
         <nav className="dl-nav" aria-label="Main navigation">
-          {NAV.map(item => (
+          {navItems.map(item => (
             item.single ? (
               <Link
                 key={item.label}
@@ -137,14 +198,14 @@ export default function DashboardLayout({ children }) {
 
         {/* User footer */}
         <div className="dl-sidebar-footer">
-          <div className="dl-user-avatar">V</div>
+          <div className="dl-user-avatar">{userInitial}</div>
           <div className="dl-user-info">
-            <span className="dl-user-name">Vikram</span>
-            <span className="dl-user-role">Admin</span>
+            <span className="dl-user-name" title={userName}>{userName}</span>
+            <span className="dl-user-role">{userRoleLabel}</span>
           </div>
           <button
             className="dl-logout-btn"
-            onClick={() => navigate('/login')}
+            onClick={handleLogout}
             title="Sign out"
             aria-label="Sign out"
           >
@@ -191,4 +252,7 @@ function ChevronIcon() {
 }
 function LogoutIcon() {
   return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+}
+function UsersIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
 }

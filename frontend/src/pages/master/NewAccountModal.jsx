@@ -135,7 +135,9 @@ export default function NewAccountModal({ isOpen, onClose, onSave, editAccount }
 
             {/* Account Name */}
             <div className="nam-field">
-              <label className="nam-lbl" htmlFor="nam-name">Account Name</label>
+              <label className="nam-lbl" htmlFor="nam-name">
+                Account Name <span style={{ color: 'var(--error)' }}>*</span>
+              </label>
               <div className="nam-input-wrap">
                 <input ref={firstRef} id="nam-name" type="text"
                   className={`nam-input${errors.name ? ' nam-input--err' : ''}`}
@@ -147,7 +149,9 @@ export default function NewAccountModal({ isOpen, onClose, onSave, editAccount }
 
             {/* Type — hierarchical selector */}
             <div className="nam-field nam-field--type">
-              <label className="nam-lbl nam-lbl--top">Type</label>
+              <label className="nam-lbl nam-lbl--top">
+                Type <span style={{ color: 'var(--error)' }}>*</span>
+              </label>
               <div className="nam-type-panel">
                 {errors.type && <span className="nam-err" style={{marginBottom:8,display:'block'}}>{errors.type}</span>}
                 {TYPE_GROUPS.map(g => (

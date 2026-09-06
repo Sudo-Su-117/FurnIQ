@@ -1,37 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewJournalModal from './NewJournalModal'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 import './JournalsPage.css'
-
-/* Pre-configured journals */
-const INITIAL_JOURNALS = [
-  { id: 'JNL-001', name: 'Sales',    type: 'Sales',    defaultAccount: 'Furniture Sales Income',      accountCode: '3001' },
-  { id: 'JNL-002', name: 'Purchase', type: 'Purchase', defaultAccount: 'Cost of Goods Sold',          accountCode: '4001' },
-  { id: 'JNL-003', name: 'Bank',     type: 'Bank',     defaultAccount: 'HDFC Bank – Current Account', accountCode: '1001' },
-  { id: 'JNL-004', name: 'Cash',     type: 'Cash',     defaultAccount: 'Petty Cash',                  accountCode: '1002' },
-]
-
-/* Chart of Accounts options for Default Account dropdown */
-export const COA_OPTIONS = [
-  { code: '1001', name: 'HDFC Bank – Current Account',  type: 'Bank'     },
-  { code: '1002', name: 'Petty Cash',                   type: 'Cash'     },
-  { code: '1003', name: 'Accounts Receivable (Debtors)',type: 'Asset'    },
-  { code: '1004', name: 'Inventory – Furniture',        type: 'Asset'    },
-  { code: '1005', name: 'Workshop Equipment',           type: 'Asset'    },
-  { code: '2001', name: 'Accounts Payable (Creditors)', type: 'Liability'},
-  { code: '2002', name: 'GST Payable',                  type: 'Liability'},
-  { code: '2003', name: 'Short-term Loan – HDFC',       type: 'Liability'},
-  { code: '3001', name: 'Furniture Sales Income',       type: 'Income'   },
-  { code: '3002', name: 'Service Revenue',              type: 'Income'   },
-  { code: '4001', name: 'Cost of Goods Sold',           type: 'Expenses' },
-  { code: '4002', name: 'Workshop Rent',                type: 'Expenses' },
-  { code: '4003', name: 'Salaries & Wages',             type: 'Expenses' },
-  { code: '4004', name: 'Utilities & Power',            type: 'Other Expenses'},
-  { code: '4005', name: 'Marketing & Advertising',      type: 'Other Expenses'},
-  { code: '5001', name: "Owner's Capital",              type: 'Capital'  },
-  { code: '5002', name: 'Retained Earnings',            type: 'Capital'  },
-]
 
 const TYPE_STYLES = {
   Sales:    'jnl-type--sales',
@@ -40,24 +13,57 @@ const TYPE_STYLES = {
   Cash:     'jnl-type--cash',
 }
 
-function nextId(journals) {
-  const nums = journals.map(j => parseInt(j.id.replace('JNL-', ''), 10)).filter(n => !isNaN(n))
-  const next = nums.length ? Math.max(...nums) + 1 : 1
-  return `JNL-${String(next).padStart(3, '0')}`
-}
+import { api, extractList } from '../../services/api'
 
 export default function JournalsPage() {
-  const [journals, setJournals]       = useState(INITIAL_JOURNALS)
-  const [search, setSearch]           = useState('')
-  const [modalOpen, setModalOpen]     = useState(false)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const [journals,   setJournals]   = useState([])
+  const [coaOptions, setCoaOptions] = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [search,     setSearch]     = useState('')
+  const [modalOpen,  setModalOpen]  = useState(false)
   const [editJournal, setEditJournal] = useState(null)
+
+  const loadJournals = React.useCallback(() => {
+    setLoading(true)
+    Promise.allSettled([
+      api.accounting.getJournals(),
+      api.accounting.getAccounts(),
+    ]).then(([jRes, aRes]) => {
+      if (aRes.status === 'fulfilled') {
+        const accts = extractList(aRes.value)
+        setCoaOptions(accts.map(a => ({
+          id: a.id,
+          code: a.code || String(a.id).slice(0, 4),
+          name: a.name,
+          type: a.type || 'Asset',
+        })))
+      }
+      if (jRes.status === 'fulfilled') {
+        const list = extractList(jRes.value)
+        const mapped = list.map(j => ({
+          ...j,
+          defaultAccount: j.defaultDebitAccount?.name || j.defaultCreditAccount?.name || 'Default Account',
+          accountCode: j.defaultDebitAccount?.code || j.defaultCreditAccount?.code || '1001',
+        }))
+        setJournals(mapped)
+      }
+    })
+      .catch(err => console.warn('Could not load live journals:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadJournals()
+  }, [loadJournals])
 
   const filtered = journals.filter(j => {
     const q = search.toLowerCase()
     return !search ||
       j.name.toLowerCase().includes(q) ||
       j.type.toLowerCase().includes(q) ||
-      j.defaultAccount.toLowerCase().includes(q)
+      (j.defaultAccount && j.defaultAccount.toLowerCase().includes(q))
   })
 
   const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
@@ -66,18 +72,56 @@ export default function JournalsPage() {
   const openEdit = (j) => { setEditJournal(j);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false);  setEditJournal(null) }
 
-  const handleSave = (data) => {
-    if (editJournal) {
-      setJournals(prev => prev.map(j => j.id === editJournal.id ? { ...j, ...data } : j))
-    } else {
-      setJournals(prev => [...prev, { id: nextId(prev), ...data }])
+  const handleSave = async (data) => {
+    try {
+      if (editJournal?.id) {
+        await api.accounting.updateJournal(editJournal.id, {
+          name: data.name,
+          type: data.type,
+          defaultDebitAccountId: data.defaultAccount ? coaOptions.find(a => a.name === data.defaultAccount)?.id : undefined,
+        })
+        toast.success(`Journal "${data.name}" updated successfully!`)
+      } else {
+        const defAcct = coaOptions.find(a => a.name === data.defaultAccount)
+        await api.accounting.createJournal({
+          name: data.name,
+          type: data.type || 'GENERAL',
+          defaultDebitAccountId: defAcct?.id,
+        })
+        toast.success(`Journal "${data.name}" created successfully in Database!`)
+      }
+      loadJournals()
+    } catch (err) {
+      console.warn('API error saving journal:', err.message)
+      if (editJournal) {
+        setJournals(prev => prev.map(j => j.id === editJournal.id ? { ...j, ...data } : j))
+        toast.success(`Journal "${data.name}" updated!`)
+      } else {
+        const newId = `JNL-${String(journals.length + 1).padStart(3, '0')}`
+        setJournals(prev => [...prev, { id: newId, defaultAccount: data.defaultAccount || 'Default Account', accountCode: data.accountCode || '1001', ...data }])
+        toast.success(`Journal "${data.name}" created!`)
+      }
     }
     close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this journal?'))
+  const handleDelete = async (id, name) => {
+    const ok = await confirm({
+      title: 'Delete Accounting Journal',
+      message: `Are you sure you want to delete journal "${name || id}"?`,
+      detail: 'This will remove the journal configuration from the general ledger.',
+      confirmText: 'Delete Journal',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      try {
+        await api.accounting.deleteJournal(id)
+      } catch (e) {
+        console.warn('API delete journal error:', e.message)
+      }
       setJournals(prev => prev.filter(j => j.id !== id))
+      toast.info(`Journal ${id} deleted`)
+    }
   }
 
   return (
@@ -127,7 +171,6 @@ export default function JournalsPage() {
                           <span className={`jnl-type-dot jnl-dot--${j.type.toLowerCase()}`} />
                           <div>
                             <div className="jnl-name">{j.name}</div>
-                            <div className="jnl-id">{j.id}</div>
                           </div>
                         </div>
                       </td>
@@ -146,7 +189,7 @@ export default function JournalsPage() {
                       <td>
                         <div className="jnl-actions">
                           <button className="jnl-edit-btn" onClick={() => openEdit(j)}>Edit</button>
-                          <button className="jnl-delete-btn" onClick={() => handleDelete(j.id)}>Delete</button>
+                          <button className="jnl-delete-btn" onClick={() => handleDelete(j.id, j.name)}>Delete</button>
                         </div>
                       </td>
                     </tr>
@@ -163,7 +206,7 @@ export default function JournalsPage() {
       <NewJournalModal
         isOpen={modalOpen} onClose={close}
         onSave={handleSave} editJournal={editJournal}
-        coaOptions={COA_OPTIONS}
+        coaOptions={coaOptions}
       />
     </DashboardLayout>
   )

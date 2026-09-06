@@ -136,11 +136,19 @@
 /* Line items table */
 .jem-lines-wrap {
   padding: 14px 24px 0;
+  overflow: visible;
 }
 .jem-lines-table {
   width: 100%; border-collapse: collapse;
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  /* NO overflow:hidden — it clips the account/partner dropdowns */
 }
+/* Apply corner rounding to the table cells instead */
+.jem-lines-table thead tr th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+.jem-lines-table thead tr th:last-child  { border-radius: 0 var(--radius-sm) 0 0; }
+.jem-lines-table tfoot tr td:first-child { border-radius: 0 0 0 var(--radius-sm); }
+.jem-lines-table tfoot tr td:last-child  { border-radius: 0 0 var(--radius-sm) 0; }
 .jem-lines-table thead tr {
   background: #FDFAF5; border-bottom: 1px solid var(--border-color);
 }
@@ -163,7 +171,9 @@
 
 .jem-line-td {
   padding: 6px 8px; vertical-align: top;
+  position: relative; /* ensure dropdowns inside are contained */
 }
+.jem-line-td--open { z-index: 100; }
 .jem-line-td--remove { vertical-align: middle; text-align: center; }
 
 /* Line inputs */
@@ -186,12 +196,15 @@
   background: var(--bg-cream); padding: 1px 4px; border-radius: 3px;
 }
 
-/* Line dropdown */
+/* Line dropdown — rendered via React portal into document.body with position:fixed
+   so it NEVER clips against any overflow:hidden or overflow:auto ancestor */
 .jem-line-dropdown {
-  position: absolute; top: 100%; left: 0; right: 0; z-index: 500;
-  background: var(--card-bg); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
-  max-height: 180px; overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 28px rgba(44,36,22,0.18);
+  max-height: 240px;
+  overflow-y: auto;
 }
 .jem-line-opt {
   display: flex; align-items: center; gap: 6px;

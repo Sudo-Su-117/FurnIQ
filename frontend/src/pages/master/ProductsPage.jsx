@@ -1,20 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import NewProductModal from './NewProductModal'
 import Pagination, { usePagination } from '../../components/Pagination'
 import './ProductsPage.css'
 
 const LOW_STOCK_THRESHOLD = 4
-
-const INITIAL_PRODUCTS = [
-  { id: 'PROD-001', name: 'Oak Dining Table (6-seater)', type: 'GOODS',   category: 'Tables',    salesPrice: 48000,  costPrice: 28000, stock: 5,    taxRate: 18, image: null, imagePreview: null },
-  { id: 'PROD-002', name: 'Rosewood Sofa Set (3+1+1)',   type: 'GOODS',   category: 'Seating',   salesPrice: 85000,  costPrice: 52000, stock: 3,    taxRate: 18, image: null, imagePreview: null },
-  { id: 'PROD-003', name: 'Teak Coffee Table',            type: 'GOODS',   category: 'Tables',    salesPrice: 22500,  costPrice: 13500, stock: 2,    taxRate: 18, image: null, imagePreview: null },
-  { id: 'PROD-004', name: 'Wicker Armchair',              type: 'GOODS',   category: 'Seating',   salesPrice: 14000,  costPrice: 8200,  stock: 11,   taxRate: 12, image: null, imagePreview: null },
-  { id: 'PROD-005', name: 'Sheesham Bookshelf (5-tier)',  type: 'GOODS',   category: 'Storage',   salesPrice: 18500,  costPrice: 10800, stock: 4,    taxRate: 18, image: null, imagePreview: null },
-  { id: 'PROD-006', name: 'Custom Upholstery Service',    type: 'SERVICE', category: 'Services',  salesPrice: 4500,   costPrice: 1800,  stock: null, taxRate: 18, image: null, imagePreview: null },
-  { id: 'PROD-007', name: 'Bedroom Combo Package',        type: 'COMBO',   category: 'Bedroom',   salesPrice: 125000, costPrice: 82000, stock: 2,    taxRate: 18, image: null, imagePreview: null },
-]
 
 const TYPE_OPTIONS = ['All', 'Goods', 'Service', 'Combo']
 
@@ -25,8 +15,8 @@ const TYPE_COLORS = {
 }
 
 const AVATAR_COLORS = ['#A67C3D','#5A8C6A','#7B6E5A','#1A6FA8','#8B3D3D','#6A3D8B','#3D6A8B']
-function productColor(name) {
-  return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length]
+function productColor(name = 'P') {
+  return AVATAR_COLORS[(name || 'P').charCodeAt(0) % AVATAR_COLORS.length]
 }
 
 function fmtPrice(n) {
@@ -34,28 +24,52 @@ function fmtPrice(n) {
   return `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 }
 
-function generateId(products) {
-  const nums = products.map(p => parseInt(p.id.replace('PROD-', ''), 10)).filter(n => !isNaN(n))
-  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1
-  return `PROD-${String(next).padStart(3, '0')}`
-}
+import { api, extractList } from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 
 export default function ProductsPage() {
-  const [products, setProducts]     = useState(INITIAL_PRODUCTS)
+  const { role } = useAuth()
+  const toast = useToast()
+  const confirm = useConfirm()
+  const isAdmin = role === 'ADMIN'
+  const [products, setProducts]     = useState([])
+  const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState('All')
   const [view, setView]             = useState('list')
   const [modalOpen, setModalOpen]   = useState(false)
   const [editProduct, setEditProduct] = useState(null)
 
+  const loadProducts = useCallback(() => {
+    setLoading(true)
+    api.products.list({ limit: 100 })
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(p => ({
+          ...p,
+          imagePreview: p.image || p.imagePreview || null,
+          stock: p.type === 'SERVICE' ? null : (p.stockQuantity ?? p.stock ?? 0),
+        }))
+        setProducts(mapped)
+      })
+      .catch(err => console.warn('Could not load live products:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadProducts()
+  }, [loadProducts])
+
   const lowStockCount = products.filter(p => p.stock !== null && p.stock < LOW_STOCK_THRESHOLD).length
 
   const filtered = products.filter(p => {
     const q = search.toLowerCase()
     const matchSearch = !search ||
-      p.name.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      p.id.toLowerCase().includes(q)
+      p.name?.toLowerCase().includes(q) ||
+      p.category?.toLowerCase().includes(q) ||
+      p.id?.toLowerCase().includes(q)
     const matchType = typeFilter === 'All' || p.type === typeFilter.toUpperCase()
     return matchSearch && matchType
   })
@@ -66,17 +80,65 @@ export default function ProductsPage() {
   const openEdit = (p) => { setEditProduct(p);    setModalOpen(true) }
   const close    = ()  => { setModalOpen(false);  setEditProduct(null) }
 
-  const handleSave = (data) => {
-    if (editProduct) {
-      setProducts(prev => prev.map(p => p.id === editProduct.id ? { ...p, ...data } : p))
-    } else {
-      setProducts(prev => [...prev, { id: generateId(prev), ...data }])
+  const handleSave = async (data) => {
+    const payload = {
+      name: data.name.trim(),
+      type: data.type,
+      salesPrice: Number(data.salesPrice),
+      costPrice: data.costPrice !== '' ? Number(data.costPrice) : 0,
+      category: data.category || undefined,
+      image: data.imagePreview || data.image || null,
+      stockQuantity: data.stock !== '' ? Number(data.stock) : 0,
     }
-    close()
+
+    try {
+      if (editProduct) {
+        await api.products.update(editProduct.id, payload)
+        toast.success(`Product "${payload.name}" updated successfully!`)
+      } else {
+        await api.products.create(payload)
+        toast.success(`Product "${payload.name}" created successfully!`)
+      }
+      loadProducts()
+      close()
+    } catch (err) {
+      console.error('Error saving product to database:', err.message)
+      toast.error(`Failed to save product: ${err.message}`)
+    }
   }
 
-  const handleArchive = (id) => {
-    if (window.confirm('Archive this product?')) setProducts(prev => prev.filter(p => p.id !== id))
+  const handleArchive = async (id, name) => {
+    const ok = await confirm({
+      title: 'Archive Product',
+      message: `Archive product "${name || 'selected item'}"?`,
+      detail: 'This product will be hidden from the active catalog, but historical sales & purchase transactions remain intact.',
+      confirmText: 'Archive',
+      confirmVariant: 'warning',
+    })
+    if (ok) {
+      setProducts(prev => prev.filter(p => p.id !== id))
+      toast.info('Product archived')
+    }
+  }
+
+  const handleDelete = async (id, name) => {
+    const ok = await confirm({
+      title: 'Permanently Delete Product',
+      message: `Permanently delete product "${name}"?`,
+      detail: 'This will remove the product and cleanly remove any associated transaction line references.',
+      confirmText: 'Delete Product',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      try {
+        await api.products.delete(id)
+        toast.info(`Product "${name}" deleted permanently`)
+        loadProducts()
+      } catch (err) {
+        console.error('Error deleting product:', err.message)
+        toast.error(`Failed to delete product: ${err.message}`)
+      }
+    }
   }
 
   return (
@@ -129,13 +191,13 @@ export default function ProductsPage() {
                   <thead>
                     <tr>
                       <th>Name</th>
-                      <th>Type</th>
+                      <th className="align-center">Type</th>
                       <th>Category</th>
                       <th className="align-right">Sales Price</th>
                       <th className="align-right">Cost Price</th>
                       <th className="align-right">Current Stock</th>
                       <th className="align-right">Tax Rate</th>
-                      <th>Actions</th>
+                      <th className="align-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -145,19 +207,19 @@ export default function ProductsPage() {
                         <td>
                           <div className="pp-name-cell">
                             <div className="pp-avatar" style={{ background: productColor(p.name) }}>
-                              {p.imagePreview
-                                ? <img src={p.imagePreview} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
+                              {(p.imagePreview || p.image)
+                                ? <img src={p.imagePreview || p.image} alt="" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}} />
                                 : p.name.charAt(0).toUpperCase()
                               }
                             </div>
                             <div>
                               <div className="pp-name-text">{p.name}</div>
-                              <div className="pp-name-id">{p.id}</div>
+                              <div style={{ fontSize: '11px', color: '#8c827a', fontFamily: 'monospace', marginTop: '2px', fontWeight: 500 }}>{p.id}</div>
                             </div>
                           </div>
                         </td>
                         {/* Type */}
-                        <td><span className={`pp-type-badge ${TYPE_COLORS[p.type] || ''}`}>{p.type}</span></td>
+                        <td className="align-center"><span className={`pp-type-badge ${TYPE_COLORS[p.type] || ''}`}>{p.type}</span></td>
                         {/* Category */}
                         <td>{p.category}</td>
                         {/* Sales Price */}
@@ -169,12 +231,17 @@ export default function ProductsPage() {
                           <StockCell stock={p.stock} />
                         </td>
                         {/* Tax */}
-                        <td className="align-right">{p.taxRate}%</td>
+                        <td className="align-right">{p.taxRate != null && p.taxRate !== '' ? `${p.taxRate}%` : '—'}</td>
                         {/* Actions */}
-                        <td>
+                        <td className="align-right">
                           <div className="pp-actions">
                             <button className="pp-edit-btn" onClick={() => openEdit(p)}>Edit</button>
-                            <button className="pp-archive-btn" onClick={() => handleArchive(p.id)}>Archive</button>
+                            {isAdmin && (
+                              <>
+                                <button className="pp-delete-btn" onClick={() => handleDelete(p.id, p.name)}>Delete</button>
+                                <button className="pp-archive-btn" onClick={() => handleArchive(p.id, p.name)}>Archive</button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -198,8 +265,8 @@ export default function ProductsPage() {
                     <div key={p.id} className="pp-product-card">
                       {/* Card image / avatar */}
                       <div className="ppc-image-wrap" style={{ background: productColor(p.name) }}>
-                        {p.imagePreview
-                          ? <img src={p.imagePreview} alt={p.name} className="ppc-image" />
+                        {(p.imagePreview || p.image)
+                          ? <img src={p.imagePreview || p.image} alt={p.name} className="ppc-image" />
                           : <span className="ppc-image-letter">{p.name.charAt(0).toUpperCase()}</span>
                         }
                         <span className={`pp-type-badge ppc-type-overlay ${TYPE_COLORS[p.type] || ''}`}>{p.type}</span>
@@ -208,7 +275,10 @@ export default function ProductsPage() {
                       {/* Card body */}
                       <div className="ppc-body">
                         <div className="ppc-name">{p.name}</div>
-                        <div className="ppc-id">{p.id} · {p.category}</div>
+                        <div className="ppc-id" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{p.category}</span>
+                          <span style={{ fontSize: '11px', color: '#8c827a', fontFamily: 'monospace', fontWeight: 600 }}>{p.id}</span>
+                        </div>
 
                         <div className="ppc-prices">
                           <div className="ppc-price-item">
@@ -235,8 +305,15 @@ export default function ProductsPage() {
 
                       {/* Card footer */}
                       <div className="ppc-footer">
-                        <button className="pp-edit-btn" onClick={() => openEdit(p)}>Edit</button>
-                        <button className="pp-archive-btn" onClick={() => handleArchive(p.id)}>Archive</button>
+                        <div className="pp-actions">
+                          <button className="pp-edit-btn" onClick={() => openEdit(p)}>Edit</button>
+                          {isAdmin && (
+                            <>
+                              <button className="pp-delete-btn" onClick={() => handleDelete(p.id, p.name)}>Delete</button>
+                              <button className="pp-archive-btn" onClick={() => handleArchive(p.id, p.name)}>Archive</button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}

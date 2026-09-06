@@ -1,0 +1,1245 @@
+﻿
+
+
+
+FurnIQ Application Page Flow Implementation Guide
+
+Admin loop, purchase and sales branches, required fields, features, and system effects
+This document converts the Urban Furniture Accounting System PDF and the workflow image into a practical build guide for the hackathon team. It explains what each page should show, which fields are required, which actions must exist, and what effect each action should create in inventory, payments, accounting entries, reports, and dashboard data.
+
+
+Scope Rule
+This is an internal accounting and inventory record system. It is not an ecommerce marketplace. Admin and accountant users create digital records that mirror offline customers, vendors, products, purchases, sales, bills, invoices, payments, and reports.
+
+
+Complete Admin Loop
+
+Step
+
+Page
+
+Route
+
+What happens
+
+1
+
+Login
+
+/login
+
+User enters email and password. System identifies role.
+
+2
+
+Dashboard
+
+/dashboard
+
+Admin sees business summary and quick actions.
+
+3
+
+Contact Master
+
+/contacts
+
+Admin creates customer and vendor records.
+
+4
+
+Product Master
+
+/products
+
+Admin creates furniture products and services.
+
+5
+
+Chart of Accounts
+
+/accounts
+
+Admin defines accounting buckets.
+
+6
+
+Journal Master
+
+/journals
+
+Admin defines transaction books.
+
+7A
+
+Purchase Order
+
+/purchase/orders
+
+Admin records planned purchase from vendor.
+
+8A
+
+Vendor Bill
+
+/purchase/bills
+
+Purchase is billed and stock/accounting update starts.
+
+9A
+
+Vendor Payment
+
+/purchase/bills/:id/pay
+
+Business pays vendor through cash or bank.
+
+7B
+
+Sales Order
+
+/sales/orders
+
+Admin records planned sale to customer.
+
+8B
+
+Customer Invoice
+
+/sales/invoices
+
+Customer is charged and stock/accounting update starts.
+
+9B
+
+Customer Payment
+
+/sales/invoices/:id/pay
+
+Business receives payment through cash or bank.
+
+10
+
+Reports
+
+/reports
+
+Admin checks Balance Sheet, P&amp;L, Budget, and Stock Report.
+
+11
+
+Dashboard
+
+/dashboard
+
+Admin confirms updated business summary.
+
+
+
+Branching After Journals
+After Contacts, Products, Accounts, and Journals are ready, the system can branch into Purchase or Sales. For the demo, run Purchase first so stock exists before the Sales flow.
+
+Branch
+
+Flow
+
+Main result
+
+Purchase branch
+
+Purchase Order -&gt; Vendor Bill -&gt; Vendor Payment
+
+Stock increases, payable is created, payment clears payable.
+
+Sales branch
+
+Sales Order -&gt; Customer Invoice -&gt; Customer Payment
+
+Stock decreases, receivable is created, payment clears receivable.
+
+Reporting close
+
+Reports -&gt; Dashboard
+
+Financial, stock, and dashboard numbers prove the loop worked.
+
+
+
+
+Page By Page Build Details
+
+
+1 Login Page
+Route: /login | Purpose: Authenticate the user and redirect based on role.
+
+Required fields or data
+
+Why it is needed
+
+Email
+
+Identifies admin, accountant, or contact user.
+
+Password
+
+Verifies access.
+
+Role from backend response
+
+Controls whether user goes to dashboard or portal.
+
+
+Feature or action on page
+
+What it enables
+
+Login form
+
+Lets registered users enter the system.
+
+JWT storage
+
+Keeps the session active for API calls.
+
+Role based redirect
+
+Admin/accountant go to dashboard, contact user goes to portal.
+
+
+System effect after action
+
+Business meaning
+
+User session starts
+
+System now knows what pages and actions are allowed.
+
+Unauthorized users blocked
+
+Business data is protected.
+
+Implementation note: For MVP, seed admin, accountant, customer contact user, and vendor contact user.
+
+
+2 Dashboard Page
+Route: /dashboard | Purpose: Show the current business status and quick navigation.
+
+Required fields or data
+
+Why it is needed
+
+Total sales
+
+Comes from customer invoices.
+
+Total purchases
+
+Comes from vendor bills.
+
+Receivables
+
+Unpaid customer invoice amount.
+
+Payables
+
+Unpaid vendor bill amount.
+
+Stock summary
+
+Current stock from product and stock movement data.
+
+Recent transactions
+
+Latest sales, purchases, and payments.
+
+
+Feature or action on page
+
+What it enables
+
+Summary cards
+
+Admin quickly sees business health.
+
+Recent activity list
+
+Shows latest operational work.
+
+Quick actions
+
+Create contact, product, purchase order, or sales order.
+
+
+System effect after action
+
+Business meaning
+
+Dashboard updates after transactions
+
+Demo proves data is connected end to end.
+
+Admin can spot pending money
+
+Receivables and payables are visible.
+
+Implementation note: Accountant can also land here, but archive or user-management actions should remain admin-only.
+
+
+3 Contact Master Page
+Route: /contacts | Purpose: Create and manage customers, vendors, and contacts that are both.
+
+Required fields or data
+
+Why it is needed
+
+Name
+
+Required contact identity.
+
+Type
+
+Customer, Vendor, or Both.
+
+Email
+
+Contact communication and optional contact login.
+
+Mobile
+
+Business contact detail.
+
+Address
+
+City, state, and pincode.
+
+Profile image
+
+Optional visual identity from the PDF.
+
+
+Feature or action on page
+
+What it enables
+
+Create contact
+
+Adds a customer or vendor for future transactions.
+
+Edit contact
+
+Admin can correct master data.
+
+Archive contact
+
+Admin can hide old contacts without deleting history.
+
+Create contact user
+
+Allows that contact to view own invoices or bills.
+
+Filter by type
+
+Separates customers and vendors.
+
+
+System effect after action
+
+Business meaning
+
+Customer becomes selectable
+
+Sales orders and customer invoices can use this contact.
+
+Vendor becomes selectable
+
+Purchase orders and vendor bills can use this contact.
+
+Contact portal access possible
+
+Contact user can view own invoice or bill records.
+
+Implementation note: Vendor does not create products. Vendor is a contact selected during purchase flows.
+
+
+4 Product Master Page
+Route: /products | Purpose: Create the furniture products or services used in purchase and sales.
+
+Required fields or data
+
+Why it is needed
+
+Product name
+
+Example: Office Chair, Wooden Table, Sofa.
+
+Type
+
+Goods, Service, or Combo.
+
+Sales price
+
+Default price for sales orders.
+
+Cost or purchase price
+
+Default price for purchase orders.
+
+Category
+
+Groups products for filtering and reporting.
+
+Opening stock
+
+Starting stock quantity for goods.
+
+
+Feature or action on page
+
+What it enables
+
+Create product
+
+Adds product to sales and purchase forms.
+
+Edit product
+
+Admin/accountant can update price/category.
+
+Archive product
+
+Admin can remove product from active selection.
+
+Stock display
+
+Shows current quantity for goods.
+
+
+System effect after action
+
+Business meaning
+
+Product becomes usable in transactions
+
+Purchase and sales records can select it.
+
+Current stock is tracked
+
+Goods stock increases through purchases and decreases through sales.
+
+Reports gain product data
+
+Stock report and transaction lines become meaningful.
+
+Implementation note: For services, stock should not increase or decrease.
+
+
+5 Chart Of Accounts Page
+Route: /accounts | Purpose: Define accounting buckets used by journal entries and financial reports.
+
+Required fields or data
+
+Why it is needed
+
+Account name
+
+Example: Cash, Bank, Debtors, Creditors.
+
+Account type
+
+Asset, Liability, Expense, Income, or Capital.
+
+Status
+
+Active or archived.
+
+
+Feature or action on page
+
+What it enables
+
+Create account
+
+Adds ledger bucket.
+
+Edit account
+
+Admin can correct account setup.
+
+Archive account
+
+Admin can hide unused account.
+
+Account type grouping
+
+Supports Balance Sheet and P&amp;L classification.
+
+
+System effect after action
+
+Business meaning
+
+Journal entries can be posted
+
+Transactions know which ledger accounts to affect.
+
+Reports can classify balances
+
+Assets, liabilities, income, expenses, and capital become reportable.
+
+Implementation note: Seed Cash, Bank, Debtors, Creditors, Sales Income, Purchase Expense, and Capital.
+
+
+6 Journal Master Page
+Route: /journals | Purpose: Define books that group similar accounting transactions.
+
+Required fields or data
+
+Why it is needed
+
+Journal name
+
+Example: Sales Journal, Purchase Journal, Bank Journal, Cash Journal.
+
+Journal type
+
+Sales, Purchase, Bank, Cash, or General.
+
+Default accounts
+
+Optional debit and credit accounts for automation.
+
+
+Feature or action on page
+
+What it enables
+
+Create journal
+
+Defines a transaction category.
+
+Assign default accounts
+
+Makes automated entry creation faster.
+
+View journal list
+
+Confirms accounting setup is complete.
+
+
+System effect after action
+
+Business meaning
+
+Transactions can generate entries
+
+Invoices, bills, and payments link to the correct journal.
+
+Reports become traceable
+
+Admin can inspect where accounting values came from.
+
+Implementation note: After this page, branch into Purchase and Sales flows.
+
+
+7A Purchase Order Page
+Route: /purchase/orders | Purpose: Record the intent to buy products from a vendor.
+
+Required fields or data
+
+Why it is needed
+
+Vendor
+
+Selected from contacts where type is Vendor or Both.
+
+Product
+
+Selected from Product Master.
+
+Quantity
+
+Number of items being purchased.
+
+Unit price
+
+Usually product cost price.
+
+Order date
+
+Date purchase order is created.
+
+
+Feature or action on page
+
+What it enables
+
+Create purchase order
+
+Records planned purchase.
+
+Add multiple product lines
+
+Supports buying more than one item.
+
+Confirm order
+
+Marks the order ready for billing.
+
+Convert to vendor bill
+
+Moves purchase into payable/accounting stage.
+
+
+System effect after action
+
+Business meaning
+
+Purchase intent is saved
+
+No final accounting effect yet if kept as draft/order.
+
+Vendor bill can be generated
+
+System moves to official bill stage.
+
+Implementation note: Keep purchase order simple. The PDF requires vendor, product, quantity, and unit price.
+
+
+8A Vendor Bill Page
+Route: /purchase/bills | Purpose: Record the official bill received from the vendor.
+
+Required fields or data
+
+Why it is needed
+
+Vendor
+
+Comes from purchase order or selected directly.
+
+Product lines
+
+Product, quantity, unit price.
+
+Bill date
+
+Date of vendor invoice/bill.
+
+Due date
+
+Payment deadline.
+
+Total amount
+
+Subtotal plus any tax if implemented.
+
+
+Feature or action on page
+
+What it enables
+
+Create from purchase order
+
+Converts order into bill.
+
+Post bill
+
+Makes bill official.
+
+Show payment status
+
+Unpaid, partially paid, or paid.
+
+Open pay action
+
+Starts vendor payment.
+
+
+System effect after action
+
+Business meaning
+
+Stock increases for goods
+
+Purchased furniture enters inventory.
+
+Payable is created
+
+Urban Furniture now owes vendor.
+
+Journal entry is created
+
+Debit Purchase Expense, credit Creditors.
+
+Implementation note: Use one database transaction for bill posting, stock movement, and journal entry creation.
+
+
+9A Vendor Payment Page
+Route: /purchase/bills/:id/pay | Purpose: Record payment made by Urban Furniture to the vendor.
+
+Required fields or data
+
+Why it is needed
+
+Vendor bill
+
+Bill being paid.
+
+Payment date
+
+Date payment is made.
+
+Payment mode
+
+Cash or Bank.
+
+Payment account
+
+Cash account or Bank account.
+
+Amount
+
+Payment amount.
+
+
+Feature or action on page
+
+What it enables
+
+Register payment
+
+Records money paid out.
+
+Validate amount
+
+Prevents paying more than bill balance.
+
+Update bill status
+
+Marks bill paid when fully settled.
+
+
+System effect after action
+
+Business meaning
+
+Cash or bank decreases
+
+Business money goes out.
+
+Payable reduces
+
+Vendor amount owed is cleared.
+
+Journal entry is created
+
+Debit Creditors, credit Cash or Bank.
+
+Implementation note: For first go, full payment is enough. Partial payment can be Level 4.
+
+
+7B Sales Order Page
+Route: /sales/orders | Purpose: Record the intent to sell products to a customer.
+
+Required fields or data
+
+Why it is needed
+
+Customer
+
+Selected from contacts where type is Customer or Both.
+
+Product
+
+Selected from Product Master.
+
+Quantity
+
+Number of items sold.
+
+Unit price
+
+Usually product sales price.
+
+Tax
+
+PDF includes tax in the sales order flow.
+
+Order date
+
+Date sale is created.
+
+
+Feature or action on page
+
+What it enables
+
+Create sales order
+
+Records planned customer sale.
+
+Check stock
+
+Prevents selling more goods than available.
+
+Add multiple product lines
+
+Supports more than one item.
+
+Convert to customer invoice
+
+Moves sale into receivable/accounting stage.
+
+
+System effect after action
+
+Business meaning
+
+Sales intent is saved
+
+No final accounting effect yet if kept as draft/order.
+
+Invoice can be generated
+
+System moves to official customer billing stage.
+
+Implementation note: This is still internal record management. Customer is selected by admin/accountant, not shopping from vendor items.
+
+
+8B Customer Invoice Page
+Route: /sales/invoices | Purpose: Record the official invoice issued to the customer.
+
+Required fields or data
+
+Why it is needed
+
+Customer
+
+Comes from sales order or selected directly.
+
+Product lines
+
+Product, quantity, unit price, tax.
+
+Invoice date
+
+Date invoice is issued.
+
+Due date
+
+Customer payment deadline.
+
+Total amount
+
+Subtotal plus tax.
+
+
+Feature or action on page
+
+What it enables
+
+Create from sales order
+
+Converts order into invoice.
+
+Post invoice
+
+Makes invoice official.
+
+Show payment status
+
+Unpaid, partially paid, or paid.
+
+Open receive payment action
+
+Starts customer payment.
+
+
+System effect after action
+
+Business meaning
+
+Stock decreases for goods
+
+Sold furniture leaves inventory.
+
+Receivable is created
+
+Customer now owes money.
+
+Journal entry is created
+
+Debit Debtors, credit Sales Income.
+
+Implementation note: Use one database transaction for invoice posting, stock movement, and journal entry creation.
+
+
+9B Customer Payment Page
+Route: /sales/invoices/:id/pay | Purpose: Record payment received from customer.
+
+Required fields or data
+
+Why it is needed
+
+Customer invoice
+
+Invoice being paid.
+
+Payment date
+
+Date payment is received.
+
+Payment mode
+
+Cash or Bank.
+
+Payment account
+
+Cash account or Bank account.
+
+Amount
+
+Payment amount.
+
+
+Feature or action on page
+
+What it enables
+
+Receive payment
+
+Records money coming into business.
+
+Validate amount
+
+Prevents receiving more than invoice balance.
+
+Update invoice status
+
+Marks invoice paid when fully settled.
+
+
+System effect after action
+
+Business meaning
+
+Cash or bank increases
+
+Business receives money.
+
+Receivable reduces
+
+Customer amount owed is cleared.
+
+Journal entry is created
+
+Debit Cash or Bank, credit Debtors.
+
+Implementation note: For first go, full payment is enough. Partial payment can be Level 4.
+
+
+10 Budget And Analytic Account Page
+Route: /budgets | Purpose: Create planned budget records linked to analytic accounts.
+
+Required fields or data
+
+Why it is needed
+
+Analytic account name
+
+Financial marker for income or expense grouping.
+
+Analytic account type
+
+Income or Expense.
+
+Budget name
+
+Name of budget plan.
+
+Period
+
+Budget start and end period.
+
+Responsible person
+
+Person responsible for the budget.
+
+Planned amount
+
+Amount planned for that period.
+
+
+Feature or action on page
+
+What it enables
+
+Create analytic account
+
+Creates a financial marker.
+
+Create budget
+
+Stores planned amount for a period.
+
+View budget list
+
+Shows planned budgets.
+
+
+System effect after action
+
+Business meaning
+
+Budget report has data
+
+Admin can compare or at least view planned budget.
+
+Financial planning is represented
+
+System covers the PDF budget requirement.
+
+Implementation note: The PDF says Budget Report provides overview of planned budget. Actual-vs-planned comparison can be added only if time remains.
+
+
+11 Reports Page
+Route: /reports | Purpose: Show generated financial and stock reports after transactions.
+
+Required fields or data
+
+Why it is needed
+
+Reporting period
+
+From and to dates for P&amp;L and budget views.
+
+As of date
+
+Date for Balance Sheet snapshot.
+
+Report type
+
+Balance Sheet, Profit and Loss, Budget Report, or Stock Report.
+
+
+Feature or action on page
+
+What it enables
+
+Balance Sheet
+
+Shows assets, liabilities, and capital.
+
+Profit and Loss
+
+Shows sales income minus purchases and expenses.
+
+Budget Report
+
+Shows planned budget overview.
+
+Stock Report
+
+Shows product stock after purchase and sale flows.
+
+Filters
+
+Let admin select reporting period.
+
+
+System effect after action
+
+Business meaning
+
+Accounting proof is visible
+
+Journal entries become meaningful reports.
+
+Inventory proof is visible
+
+Purchase and sale effects show in stock.
+
+Hackathon demo closes strongly
+
+End-to-end business loop is proven.
+
+Implementation note: Reports should use real database data, not static UI values.
+
+
+12 Contact Portal Page
+Route: /portal | Purpose: Give contact users limited access to their own invoice or bill records.
+
+Required fields or data
+
+Why it is needed
+
+Logged in contact user
+
+User must be linked to a Contact Master record.
+
+Contact id
+
+Used to filter invoices and bills.
+
+Own invoice or bill list
+
+Only records linked to that contact.
+
+Payment action
+
+Allows payment action where relevant.
+
+
+Feature or action on page
+
+What it enables
+
+View own customer invoices
+
+Customer sees their invoice records.
+
+View own vendor bills
+
+Vendor sees their bill/payment status.
+
+Make payment
+
+PDF says contact users can make payment.
+
+Restrict all other records
+
+Contact cannot view other contacts' documents.
+
+
+System effect after action
+
+Business meaning
+
+Data privacy is enforced
+
+Contact only sees own records.
+
+Portal requirement is covered
+
+PDF actor requirement is implemented.
+
+Implementation note: Vendor is treated as a contact type. Vendor should not access product creation, accounts, journals, reports, or other contacts.
+
+
+
+Level Based Build Order
+
+Level
+
+Build target
+
+Pages included
+
+Must be working before moving on
+
+Level 1
+
+App skeleton and masters
+
+Login, Dashboard shell, Contacts, Products, Accounts, Journals
+
+CRUD works with database and seeded data.
+
+Level 2
+
+Transaction creation
+
+Purchase Orders, Sales Orders, Vendor Bills, Customer Invoices
+
+Orders convert into bills/invoices.
+
+Level 3
+
+Accounting and stock integration
+
+Vendor Payment, Customer Payment, Journal Entries, Stock Report
+
+Payments, journal entries, and stock update correctly.
+
+Level 4
+
+Reports and portal
+
+Reports, Budgets, Contact Portal
+
+Reports use real data and contact users see only own records.
+
+Level 5
+
+Demo polish
+
+All pages
+
+One clean full demo loop works without manual database edits.
+
+
+
+Minimum Demo Data
+
+Data
+
+Required examples
+
+Users
+
+Admin, accountant, one customer contact user, one vendor contact user.
+
+Contacts
+
+One customer such as Nimesh Pathak, one vendor such as Rahul Sharma or Azure Furniture.
+
+Products
+
+Office Chair, Wooden Table, Sofa, Dining Table.
+
+Accounts
+
+Cash, Bank, Debtors, Creditors, Sales Income, Purchase Expense, Capital.
+
+Journals
+
+Sales Journal, Purchase Journal, Bank Journal, Cash Journal.
+
+Budget
+
+One analytic account and one budget for the demo period.
+
+
+
+Definition Of Done
+
+
+Admin can create contacts, products, accounts, journals, and budgets.
+
+
+Purchase order can become vendor bill.
+
+
+Vendor bill posting increases stock and creates accounting entry.
+
+
+Vendor payment reduces payable and creates accounting entry.
+
+
+Sales order can become customer invoice.
+
+
+Customer invoice posting decreases stock and creates accounting entry.
+
+
+Customer payment reduces receivable and creates accounting entry.
+
+
+Reports show Balance Sheet, Profit and Loss, Budget Report, and Stock Report from real data.
+
+
+Dashboard reflects the completed transaction loop.
+
+
+Contact user sees only their own invoices or bills.
+
+

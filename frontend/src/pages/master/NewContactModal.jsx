@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { compressImage } from '../../utils/imageHelper'
 import './NewContactModal.css'
 
 const EMPTY_FORM = {
@@ -18,7 +19,8 @@ const EMPTY_FORM = {
 
 function validate(fields) {
   const errors = {}
-  if (!fields.name.trim()) errors.name = 'Name is required.'
+  if (!fields.name.trim()) errors.name = 'Contact name is required.'
+  if (!fields.type) errors.type = 'Contact type is required.'
   if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email.trim()))
     errors.email = 'Enter a valid email address.'
   if (fields.mobile && !/^[+\d\s\-()\\.]{7,20}$/.test(fields.mobile.trim()))
@@ -48,7 +50,7 @@ export default function NewContactModal({ isOpen, onClose, onSave, editContact }
           pincode:      editContact.pincode      || '',
           address:      editContact.address      || '',
           image:        editContact.image        || null,
-          imagePreview: editContact.imagePreview || null,
+          imagePreview: editContact.imagePreview || editContact.profileImage || null,
         })
       } else {
         setFields(EMPTY_FORM)
@@ -85,25 +87,27 @@ export default function NewContactModal({ isOpen, onClose, onSave, editContact }
     setConfirmed(false)
   }
 
-  const handleImageChange = (e) => {
+  const handleImageChange = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setFields(prev => ({ ...prev, image: file, imagePreview: reader.result }))
+    try {
+      const compressedUri = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 })
+      setFields(prev => ({ ...prev, image: file, imagePreview: compressedUri }))
+    } catch (err) {
+      console.error('Error compressing image:', err)
     }
-    reader.readAsDataURL(file)
   }
 
-  const handleImageDrop = (e) => {
+  const handleImageDrop = async (e) => {
     e.preventDefault()
     const file = e.dataTransfer.files[0]
     if (!file || !file.type.startsWith('image/')) return
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setFields(prev => ({ ...prev, image: file, imagePreview: reader.result }))
+    try {
+      const compressedUri = await compressImage(file, { maxWidth: 600, maxHeight: 600, quality: 0.85 })
+      setFields(prev => ({ ...prev, image: file, imagePreview: compressedUri }))
+    } catch (err) {
+      console.error('Error compressing dropped image:', err)
     }
-    reader.readAsDataURL(file)
   }
 
   const handleOverlayClick = (e) => {
@@ -178,7 +182,7 @@ export default function NewContactModal({ isOpen, onClose, onSave, editContact }
               {/* Contact Name */}
               <div className="ncm-field ncm-field--inline">
                 <label className="ncm-label ncm-label--inline" htmlFor="ncm-name">
-                  Contact Name
+                  Contact Name <span style={{ color: 'var(--error)' }}>*</span>
                 </label>
                 <div className="ncm-input-wrap">
                   <input
@@ -195,7 +199,9 @@ export default function NewContactModal({ isOpen, onClose, onSave, editContact }
 
               {/* TYPE toggle */}
               <div className="ncm-field ncm-field--inline">
-                <label className="ncm-label ncm-label--inline">Type</label>
+                <label className="ncm-label ncm-label--inline">
+                  Type <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
                 <div className="ncm-type-group" role="group" aria-label="Contact type">
                   {['CUSTOMER', 'VENDOR', 'BOTH'].map(t => (
                     <button key={t} type="button"

@@ -1,48 +1,102 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import DataTable from '../../components/DataTable'
+import Pagination, { usePagination } from '../../components/Pagination'
+import { api, extractList } from '../../services/api'
 import '../sales/SalesPage.css'
 
-const ORDERS = [
-  { id: 'PO-001', vendorId: 'VEND-001', vendor: 'Timber World',      date: '1 Sept 2026', subtotal: 62000,  tax: 11160, total: 73160,  status: 'Confirmed' },
-  { id: 'PO-002', vendorId: 'VEND-002', vendor: 'Steel Hub',         date: '2 Sept 2026', subtotal: 38500,  tax: 6930,  total: 45430,  status: 'Confirmed' },
-  { id: 'PO-003', vendorId: 'VEND-003', vendor: 'Fabric Co.',        date: '3 Sept 2026', subtotal: 91000,  tax: 16380, total: 107380, status: 'Draft'     },
-]
-
-const BILLS = [
-  { id: 'BILL-001', vendorId: 'VEND-001', vendor: 'Timber World',    date: '2 Sept 2026', subtotal: 62000,  tax: 11160, total: 73160,  status: 'Confirmed' },
-  { id: 'BILL-002', vendorId: 'VEND-002', vendor: 'Steel Hub',       date: '3 Sept 2026', subtotal: 38500,  tax: 6930,  total: 45430,  status: 'Confirmed' },
-  { id: 'BILL-003', vendorId: 'VEND-003', vendor: 'Fabric Co.',      date: '4 Sept 2026', subtotal: 91000,  tax: 16380, total: 107380, status: 'Draft'     },
-]
-
-const PAYMENTS = [
-  { id: 'PPAY-001', vendorId: 'VEND-001', vendor: 'Timber World',   date: '3 Sept 2026', subtotal: 73160,  tax: 0, total: 73160,  status: 'Confirmed' },
-  { id: 'PPAY-002', vendorId: 'VEND-002', vendor: 'Steel Hub',      date: '4 Sept 2026', subtotal: 45430,  tax: 0, total: 45430,  status: 'Confirmed' },
-  { id: 'PPAY-003', vendorId: 'VEND-003', vendor: 'Fabric Co.',     date: '5 Sept 2026', subtotal: 107380, tax: 0, total: 107380, status: 'Draft'     },
-]
-
-const TABS = [
-  { key: 'orders',   label: 'Purchase Orders', data: ORDERS,   orderLabel: 'ORDER NO.' },
-  { key: 'bills',    label: 'Purchase Bills',  data: BILLS,    orderLabel: 'BILL NO.'  },
-  { key: 'payments', label: 'Payment',         data: PAYMENTS, orderLabel: 'PAYMENT NO.' },
-]
-
-const fmt = (n) => n === 0 ? '—' : `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+const fmt = (n) => n === 0 ? '—' : `₹${Number(n||0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
 
 export default function PurchasePage() {
   const { tab } = useParams()
   const navigate = useNavigate()
+
+  const [orders,   setOrders]   = useState([])
+  const [bills,    setBills]    = useState([])
+  const [payments, setPayments] = useState([])
+  const [loading,  setLoading]  = useState(false)
+  const [search,   setSearch]   = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    Promise.allSettled([
+      api.purchases.listOrders({ limit: 100 }),
+      api.purchases.listBills({ limit: 100 }),
+      api.payments.list({ limit: 100 }),
+    ]).then(([ordersRes, billsRes, payRes]) => {
+      const vendorMap = new Map()
+      let vCounter = 1
+      const formatVendorId = (v) => {
+        if (!v) return 'VEND-001'
+        const key = v.id || v.name || String(v)
+        if (typeof key === 'string' && key.startsWith('VEND-')) return key
+        if (!vendorMap.has(key)) {
+          vendorMap.set(key, `VEND-${String(vCounter++).padStart(3, '0')}`)
+        }
+        return vendorMap.get(key)
+      }
+
+      if (ordersRes.status === 'fulfilled') {
+        const list = extractList(ordersRes.value)
+        setOrders(list.map(o => ({
+          id: o.orderNumber || o.id,
+          vendorId: formatVendorId(o.vendor),
+          vendor: o.vendor?.name || 'Vendor',
+          date: o.orderDate ? new Date(o.orderDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
+          subtotal: Number(o.totalAmount || 0),
+          tax: 0,
+          total: Number(o.totalAmount || 0),
+          status: o.status === 'CONFIRMED' ? 'Confirmed' : 'Draft',
+        })))
+      }
+      if (billsRes.status === 'fulfilled') {
+        const list = extractList(billsRes.value)
+        setBills(list.map(b => ({
+          id: b.billNumber || b.id,
+          vendorId: formatVendorId(b.vendor),
+          vendor: b.vendor?.name || 'Vendor',
+          date: b.billDate ? new Date(b.billDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
+          subtotal: Number(b.totalAmount || 0),
+          tax: 0,
+          total: Number(b.totalAmount || 0),
+          status: b.status === 'PAID' || b.status === 'CONFIRMED' ? 'Confirmed' : 'Draft',
+        })))
+      }
+      if (payRes.status === 'fulfilled') {
+        const list = extractList(payRes.value)
+        const vendPays = list.filter(p => p.type === 'VENDOR_PAYMENT')
+        setPayments(vendPays.map(p => ({
+          id: p.paymentNumber || p.id,
+          vendorId: formatVendorId(p.vendorBill?.vendor),
+          vendor: p.vendorBill?.vendor?.name || 'Vendor',
+          date: p.paymentDate ? new Date(p.paymentDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '',
+          subtotal: Number(p.amount || 0),
+          tax: 0,
+          total: Number(p.amount || 0),
+          status: 'Confirmed',
+        })))
+      }
+    }).finally(() => setLoading(false))
+  }, [])
+
+  const TABS = [
+    { key: 'orders',   label: 'Purchase Orders', data: orders,   orderLabel: 'ORDER NO.' },
+    { key: 'bills',    label: 'Purchase Bills',  data: bills,    orderLabel: 'BILL NO.'  },
+    { key: 'payments', label: 'Payment',         data: payments, orderLabel: 'PAYMENT NO.' },
+  ]
+
   const activeIdx = TABS.findIndex(t => t.key === tab)
   const currentTab = activeIdx >= 0 ? activeIdx : 0
   const { data, orderLabel } = TABS[currentTab]
-  const [search, setSearch] = useState('')
 
   const filtered = data.filter(row =>
     Object.values(row).some(v =>
       String(v).toLowerCase().includes(search.toLowerCase())
     )
   )
+
+  const { page, setPage, paged, total } = usePagination(filtered, 10)
 
   const handleTabClick = (idx) => {
     navigate(`/dashboard/purchase/${TABS[idx].key}`)
@@ -60,13 +114,30 @@ export default function PurchasePage() {
     { key: 'status',   label: 'STATUS',     align: 'center', render: (v) => <StatusBadge status={v} /> },
   ]
 
+  const currentTabName = TABS[currentTab].label
+
   return (
     <DashboardLayout>
       <div className="sp-page">
+        {/* Breadcrumb */}
         <div className="sp-breadcrumb">Purchase</div>
+
+        {/* Page title */}
         <div className="sp-header">
-          <h1 className="sp-title">Purchase</h1>
-          <p className="sp-subtitle">Orders, bills, and payments</p>
+          <div>
+            <h1 className="sp-title">Purchase</h1>
+            <p className="sp-subtitle">Purchase orders, vendor bills, and vendor payments</p>
+          </div>
+          <button 
+            className="sp-new-btn"
+            onClick={() => {
+              if (currentTab === 0) navigate('/dashboard/data/purchase-orders')
+              else if (currentTab === 1) navigate('/dashboard/data/vendor-bills')
+              else navigate('/dashboard/data/payments')
+            }}
+          >
+            <PlusIcon /> New {currentTab === 0 ? 'Purchase Order' : currentTab === 1 ? 'Purchase Bill' : 'Payment'}
+          </button>
         </div>
 
         <div className="sp-tabs">
@@ -93,13 +164,8 @@ export default function PurchasePage() {
               aria-label="Search records"
             />
           </div>
-          <DataTable columns={columns} rows={filtered} />
-          <div className="sp-footer">
-            <span className="sp-count">Showing 1–{filtered.length} of {data.length}</span>
-            <div className="sp-pagination">
-              <button className="sp-page-btn sp-page-btn--active" aria-current="page">1</button>
-            </div>
-          </div>
+          <DataTable columns={columns} rows={paged} />
+          <Pagination total={total} page={page} pageSize={10} onChange={setPage} />
         </div>
       </div>
     </DashboardLayout>
@@ -112,4 +178,7 @@ function StatusBadge({ status }) {
 }
 function SearchIcon() {
   return <svg className="sp-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+}
+function PlusIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 }

@@ -2,30 +2,26 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import './AnalyticAccountsPage.css'
 import Pagination, { usePagination } from '../../components/Pagination'
+import { api, extractList } from '../../services/api'
+import { useToast } from '../../context/ToastContext'
+import { useConfirm } from '../../context/ConfirmContext'
 
 /* ── Analytic types from wireframe ── */
 const ANALYTIC_TYPES = ['Budget', 'Short Body', 'End Body', 'Committed', 'Achieved']
 
-const INITIAL_ACCOUNTS = [
-  { id: 'AA-001', name: 'Furniture Manufacturing',   type: 'Budget',     analyticAmount: 500000  },
-  { id: 'AA-002', name: 'Showroom Operations',        type: 'Budget',     analyticAmount: 300000  },
-  { id: 'AA-003', name: 'Q3 Marketing Campaign',      type: 'Short Body', analyticAmount: 120000  },
-  { id: 'AA-004', name: 'Warehouse Expansion Phase 1',type: 'Committed',  analyticAmount: 750000  },
-  { id: 'AA-005', name: 'Sales Target – FY26',        type: 'Achieved',   analyticAmount: 1200000 },
-  { id: 'AA-006', name: 'Staff Training Q4',          type: 'End Body',   analyticAmount: 80000   },
-]
-
 const TYPE_STYLE = {
-  'Budget':     'aa-type--budget',
-  'Short Body': 'aa-type--short',
-  'End Body':   'aa-type--end',
-  'Committed':  'aa-type--committed',
-  'Achieved':   'aa-type--achieved',
+  Budget:       'aa-type--budget',
+  'Short Body': 'aa-type--short-body',
+  'End Body':   'aa-type--end-body',
+  Committed:    'aa-type--committed',
+  Achieved:     'aa-type--achieved',
+  EXPENSE:      'aa-type--committed',
+  INCOME:       'aa-type--budget',
 }
 
 const fmt = (n) => `₹${Number(n).toLocaleString('en-IN')}`
 
-let counter = INITIAL_ACCOUNTS.length + 1
+let counter = 1
 function nextId() { return `AA-${String(counter++).padStart(3,'0')}` }
 
 /* ─── Modal ─── */
@@ -179,18 +175,81 @@ function AnalyticAccountModal({ isOpen, onClose, onSave, editAccount }) {
   )
 }
 
+const STORAGE_KEY_DATA = 'furniq_analytic_accounts_data'
+
 /* ─── Page ─── */
 export default function AnalyticAccountsPage() {
-  const [accounts, setAccounts]   = useState(INITIAL_ACCOUNTS)
-  const [search,   setSearch]     = useState('')
-  const [typeFilter,setTypeFilter]= useState('All')
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editAcc,   setEditAcc]   = useState(null)
+  const toast   = useToast()
+  const confirm = useConfirm()
+  const [accounts,   setAccounts]   = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [search,     setSearch]     = useState('')
+  const [typeFilter, setTypeFilter] = useState('All')
+  const [modalOpen,  setModalOpen]  = useState(false)
+  const [editAccount,setEditAccount]= useState(null)
+
+  const saveAccountsToStorage = (updatedList) => {
+    setAccounts(updatedList)
+    try {
+      localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updatedList))
+    } catch (e) {
+      console.warn('Could not save analytic accounts to localStorage:', e)
+    }
+  }
+
+  const loadAccounts = useCallback(() => {
+    setLoading(true)
+    const cached = localStorage.getItem(STORAGE_KEY_DATA)
+    let localData = []
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localData = parsed
+        }
+      } catch (e) {}
+    }
+
+    api.budgets.getAnalyticAccounts()
+      .then(res => {
+        const list = extractList(res)
+        const mapped = list.map(a => {
+          const matchedLocal = localData.find(l => l.id === a.id || l.name === a.name)
+          const amount = matchedLocal?.analyticAmount !== undefined
+            ? matchedLocal.analyticAmount
+            : (a.budgets?.[0]?.plannedAmount ? Number(a.budgets[0].plannedAmount) : 50000)
+          const type = matchedLocal?.type || (a.type === 'INCOME' ? 'Budget' : 'Committed')
+
+          return {
+            ...a,
+            id: a.id,
+            name: matchedLocal?.name || a.name,
+            type,
+            analyticAmount: Number(amount) || 0,
+          }
+        })
+
+        const localOnly = localData.filter(l => !mapped.some(m => m.id === l.id || m.name === l.name))
+        const merged = [...mapped, ...localOnly]
+        saveAccountsToStorage(merged)
+      })
+      .catch(err => {
+        console.warn('Could not load live analytic accounts:', err.message)
+        if (localData.length > 0) {
+          setAccounts(localData)
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadAccounts()
+  }, [loadAccounts])
 
   const filtered = accounts.filter(a => {
     const q = search.toLowerCase()
-    const matchSearch = !search || a.name.toLowerCase().includes(q) || a.type.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)
-    const matchType   = typeFilter === 'All' || a.type === typeFilter
+    const matchSearch = !search || a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q)
+    const matchType = typeFilter === 'All' || a.type === typeFilter
     return matchSearch && matchType
   })
 
@@ -198,21 +257,48 @@ export default function AnalyticAccountsPage() {
 
   const { page, setPage, paged, total: totalFiltered } = usePagination(filtered, 10)
 
-  const openAdd  = ()  => { setEditAcc(null); setModalOpen(true) }
-  const openEdit = (a) => { setEditAcc(a);    setModalOpen(true) }
-  const close    = ()  => { setModalOpen(false); setEditAcc(null) }
+  const openAdd  = ()  => { setEditAccount(null); setModalOpen(true) }
+  const openEdit = (a) => { setEditAccount(a);    setModalOpen(true) }
+  const close    = ()  => { setModalOpen(false);  setEditAccount(null) }
 
-  const handleSave = (data) => {
-    if (editAcc) {
-      setAccounts(prev => prev.map(a => a.id === editAcc.id ? { ...a, ...data } : a))
+  const handleSave = async (data) => {
+    let nextList
+    const newAmount = Number(data.analyticAmount) || 0
+    if (editAccount) {
+      nextList = accounts.map(a => a.id === editAccount.id ? { ...a, ...data, analyticAmount: newAmount } : a)
+      toast.success(`Analytic account "${data.name}" updated successfully!`)
     } else {
-      setAccounts(prev => [...prev, { id: nextId(), ...data }])
+      const nid = nextId()
+      const newAcc = { id: nid, name: data.name.trim(), type: data.type || 'Budget', analyticAmount: newAmount }
+      nextList = [...accounts, newAcc]
+      toast.success(`Analytic account "${data.name}" created successfully!`)
+
+      try {
+        await api.budgets.createAnalyticAccount({
+          name: data.name.trim(),
+          type: (data.type === 'Budget' || data.type === 'Achieved') ? 'INCOME' : 'EXPENSE',
+        })
+      } catch (e) {
+        console.warn('API create analytic account error:', e.message)
+      }
     }
+    saveAccountsToStorage(nextList)
     close()
   }
 
-  const handleDelete = (id) => {
-    if (window.confirm('Delete this analytic account?')) setAccounts(prev => prev.filter(a => a.id !== id))
+  const handleDelete = async (id, name) => {
+    const ok = await confirm({
+      title: 'Delete Analytic Account',
+      message: `Are you sure you want to delete analytic account "${name || id}"?`,
+      detail: 'This will remove the analytic cost center from budget tracking.',
+      confirmText: 'Delete Account',
+      confirmVariant: 'danger',
+    })
+    if (ok) {
+      const nextList = accounts.filter(a => a.id !== id)
+      saveAccountsToStorage(nextList)
+      toast.info(`Analytic account ${name || id} deleted`)
+    }
   }
 
   /* Summary by type */
@@ -265,7 +351,6 @@ export default function AnalyticAccountsPage() {
               <table className="aa-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
                     <th>Account Name</th>
                     <th>Type</th>
                     <th className="align-right">Analytic Amount</th>
@@ -275,7 +360,6 @@ export default function AnalyticAccountsPage() {
                 <tbody>
                   {paged.map((a,i) => (
                     <tr key={a.id} className={`aa-tr${i%2===1?' aa-tr--alt':''}`}>
-                      <td className="aa-id">{a.id}</td>
                       <td className="aa-name-text">{a.name}</td>
                       <td><span className={`aa-type-badge ${TYPE_STYLE[a.type]||''}`}>{a.type}</span></td>
                       <td className="align-right aa-amount">{fmt(a.analyticAmount)}</td>
@@ -296,7 +380,7 @@ export default function AnalyticAccountsPage() {
       </div>
 
       <AnalyticAccountModal isOpen={modalOpen} onClose={close}
-        onSave={handleSave} editAccount={editAcc} />
+        onSave={handleSave} editAccount={editAccount} />
     </DashboardLayout>
   )
 }

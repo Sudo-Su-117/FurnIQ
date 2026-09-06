@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import DashboardLayout from '../../layouts/DashboardLayout'
 import './FinancialReportsPage.css'
 
@@ -30,31 +30,28 @@ const PERIODS = [
      Net Income      = Difference of Income - Revenue
 ══════════════════════════════════════════════════════ */
 
-/* Data sourced from Chart of Accounts / Journal Entries */
-const PL_ACCOUNTS = {
-  income: [
-    { label: 'Furniture Sales Income', amount: 357500, type: 'Income' },
-    { label: 'Service Revenue',        amount: 18000,  type: 'Income' },
-  ],
-  purchaseExpense: [
-    { label: 'Cost of Goods Sold', amount: 233500, type: 'Expenses' },
-  ],
-  otherExpense: [
-    { label: 'Workshop Rent',           amount: 36000,  type: 'Other Expenses' },
-    { label: 'Salaries & Wages',        amount: 84000,  type: 'Other Expenses' },
-    { label: 'Utilities & Power',       amount: 9200,   type: 'Other Expenses' },
-    { label: 'Marketing & Advertising', amount: 11300,  type: 'Other Expenses' },
-  ],
-}
+import { api } from '../../services/api'
 
 function ProfitLossReport({ period, year }) {
-  /* Computed totals */
-  const totalIncome     = PL_ACCOUNTS.income.reduce((s, r) => s + r.amount, 0)
-  const incomeFromSales = PL_ACCOUNTS.income.find(r => r.label === 'Furniture Sales Income')?.amount ?? 0
-  const purchaseExpense = PL_ACCOUNTS.purchaseExpense.reduce((s, r) => s + r.amount, 0)
-  const otherExpense    = PL_ACCOUNTS.otherExpense.reduce((s, r) => s + r.amount, 0)
-  const totalExpenses   = purchaseExpense + otherExpense
-  const netIncome       = totalIncome - totalExpenses
+  const [plData, setPlData] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api.reports.profitLoss()
+      .then(res => {
+        setPlData(res?.data || res)
+      })
+      .catch(err => console.warn('Could not load profit & loss statement:', err.message))
+      .finally(() => setLoading(false))
+  }, [period, year])
+
+  const totalIncome     = Number(plData?.income?.totalIncome ?? 0)
+  const incomeFromSales = Number(plData?.income?.salesIncome ?? 0)
+  const purchaseExpense = Number(plData?.expenses?.purchaseExpenses ?? 0)
+  const otherExpense    = Number((plData?.expenses?.totalExpenses ?? 0) - purchaseExpense)
+  const totalExpenses   = Number(plData?.expenses?.totalExpenses ?? 0)
+  const netIncome       = Number(plData?.netProfit ?? 0)
 
   const rows = [
     /* ── INCOME section ── */
@@ -122,12 +119,10 @@ function ProfitLossReport({ period, year }) {
           <div className="fr-pl-detail-body">
             <div className="fr-section">
               <div className="fr-section-header">SALESINCOME (Income type accounts)</div>
-              {PL_ACCOUNTS.income.map(r => (
-                <div key={r.label} className="fr-row">
-                  <span className="fr-row-label">{r.label}</span>
-                  <span className="fr-row-amount">{fmtINR(r.amount)}</span>
-                </div>
-              ))}
+              <div className="fr-row">
+                <span className="fr-row-label">Furniture Sales Income</span>
+                <span className="fr-row-amount">{fmtINR(incomeFromSales)}</span>
+              </div>
               <div className="fr-subtotal-row">
                 <span className="fr-subtotal-label">Total Income</span>
                 <span className="fr-subtotal-amount">{fmtINR(totalIncome)}</span>
@@ -136,12 +131,10 @@ function ProfitLossReport({ period, year }) {
 
             <div className="fr-section">
               <div className="fr-section-header">PURCHASEEXPENSE (COGS)</div>
-              {PL_ACCOUNTS.purchaseExpense.map(r => (
-                <div key={r.label} className="fr-row">
-                  <span className="fr-row-label">{r.label}</span>
-                  <span className="fr-row-amount">{fmtINR(r.amount)}</span>
-                </div>
-              ))}
+              <div className="fr-row">
+                <span className="fr-row-label">Cost of Goods Sold (Purchase Expenses)</span>
+                <span className="fr-row-amount">{fmtINR(purchaseExpense)}</span>
+              </div>
               <div className="fr-subtotal-row">
                 <span className="fr-subtotal-label">purchaseExpense</span>
                 <span className="fr-subtotal-amount">{fmtINR(purchaseExpense)}</span>
@@ -156,12 +149,10 @@ function ProfitLossReport({ period, year }) {
 
             <div className="fr-section">
               <div className="fr-section-header">OTHEREXPENSES</div>
-              {PL_ACCOUNTS.otherExpense.map(r => (
-                <div key={r.label} className="fr-row">
-                  <span className="fr-row-label">{r.label}</span>
-                  <span className="fr-row-amount">{fmtINR(r.amount)}</span>
-                </div>
-              ))}
+              <div className="fr-row">
+                <span className="fr-row-label">Other Operating Expenses</span>
+                <span className="fr-row-amount">{fmtINR(otherExpense)}</span>
+              </div>
               <div className="fr-subtotal-row">
                 <span className="fr-subtotal-label">otherExpenses</span>
                 <span className="fr-subtotal-amount">{fmtINR(otherExpense)}</span>
@@ -188,22 +179,34 @@ function ProfitLossReport({ period, year }) {
    Footer:      Total Asset | Total Liability
 ══════════════════════════════════════════════════════ */
 
-const BS_ACCOUNTS = {
-  assets: [
-    { label: 'Bank',     note: 'Account type: Bank',    amount: 495000 },
-    { label: 'Cash',     note: 'Account type: Cash',    amount: 12000  },
-    { label: 'Debtors',  note: 'Account type: Asset',   amount: 310000 },
-  ],
-  liabilities: [
-    { label: 'Capital',   note: 'Account type: Capital',   amount: 826500 },
-    { label: 'Creditors', note: 'Account type: Liability',  amount: 220500 },
-  ],
-}
-
 function BalanceSheetReport() {
-  const totalAssets      = BS_ACCOUNTS.assets.reduce((s, r) => s + r.amount, 0)
-  const totalLiabilities = BS_ACCOUNTS.liabilities.reduce((s, r) => s + r.amount, 0)
-  const balanced         = totalAssets === totalLiabilities
+  const [bsData, setBsData] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api.reports.balanceSheet()
+      .then(res => {
+        setBsData(res?.data || res)
+      })
+      .catch(err => console.warn('Could not load balance sheet:', err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const assets = [
+    { label: 'Bank',     note: 'Account type: Bank',    amount: Number(bsData?.assets?.bank ?? 0) },
+    { label: 'Cash',     note: 'Account type: Cash',    amount: Number(bsData?.assets?.cash ?? 0) },
+    { label: 'Debtors',  note: 'Account type: Asset',   amount: Number(bsData?.assets?.debtors ?? 0) },
+  ]
+
+  const liabilities = [
+    { label: 'Capital',   note: 'Account type: Capital',   amount: Number(bsData?.capital?.totalCapital ?? 0) },
+    { label: 'Creditors', note: 'Account type: Liability',  amount: Number(bsData?.liabilities?.creditors ?? 0) },
+  ]
+
+  const totalAssets      = Number(bsData?.assets?.totalAssets ?? 0)
+  const totalLiabilities = Number(bsData?.totalLiabilitiesAndCapital ?? 0)
+  const balanced         = bsData?.isBalanced ?? true
 
   return (
     <div className="fr-report">
@@ -217,9 +220,9 @@ function BalanceSheetReport() {
         </thead>
         <tbody>
           {/* Render rows: one asset and one liability per row */}
-          {Array.from({ length: Math.max(BS_ACCOUNTS.assets.length, BS_ACCOUNTS.liabilities.length) }).map((_, i) => {
-            const asset = BS_ACCOUNTS.assets[i]
-            const liab  = BS_ACCOUNTS.liabilities[i]
+          {Array.from({ length: Math.max(assets.length, liabilities.length) }).map((_, i) => {
+            const asset = assets[i]
+            const liab  = liabilities[i]
             return (
               <tr key={i} className="fr-bs-row">
                 {/* Asset cell */}
@@ -303,20 +306,33 @@ function BalanceSheetReport() {
 /* ══════════════════════════════════════════════════════
    TAB 3 — STOCK REPORT
 ══════════════════════════════════════════════════════ */
-const STOCK_DATA = [
-  { id: 'PROD-001', name: 'Oak Dining Table (6-seater)', category: 'Tables',  qty: 5,  costPrice: 28000,  salesPrice: 48000,  stockValue: 140000 },
-  { id: 'PROD-002', name: 'Rosewood Sofa Set (3+1+1)',   category: 'Seating', qty: 3,  costPrice: 52000,  salesPrice: 85000,  stockValue: 156000 },
-  { id: 'PROD-003', name: 'Teak Coffee Table',           category: 'Tables',  qty: 2,  costPrice: 13500,  salesPrice: 22500,  stockValue: 27000  },
-  { id: 'PROD-004', name: 'Wicker Armchair',             category: 'Seating', qty: 11, costPrice: 8200,   salesPrice: 14000,  stockValue: 90200  },
-  { id: 'PROD-005', name: 'Sheesham Bookshelf (5-tier)', category: 'Storage', qty: 4,  costPrice: 10800,  salesPrice: 18500,  stockValue: 43200  },
-  { id: 'PROD-006', name: 'Bedroom Combo Package',       category: 'Bedroom', qty: 2,  costPrice: 82000,  salesPrice: 125000, stockValue: 164000 },
-]
-
 const LOW_STOCK = 4
 
 function StockReport() {
-  const totalValue = STOCK_DATA.reduce((s, r) => s + r.stockValue, 0)
-  const lowCount   = STOCK_DATA.filter(r => r.qty < LOW_STOCK).length
+  const [stockItems, setStockItems] = useState([])
+
+  useEffect(() => {
+    api.reports.stock()
+      .then(res => {
+        const list = res?.data || (Array.isArray(res) ? res : null)
+        if (list && list.length > 0) {
+          const mapped = list.map(r => ({
+            id: r.id,
+            name: r.name,
+            category: r.category || 'General',
+            qty: r.stockQuantity ?? 0,
+            costPrice: Number(r.costPrice || 0),
+            salesPrice: Number(r.salesPrice || 0),
+            stockValue: Number(r.stockValuation || (r.stockQuantity * Number(r.costPrice || 0))),
+          }))
+          setStockItems(mapped)
+        }
+      })
+      .catch(err => console.warn('Could not load live stock report:', err.message))
+  }, [])
+
+  const totalValue = stockItems.reduce((s, r) => s + r.stockValue, 0)
+  const lowCount   = stockItems.filter(r => r.qty < LOW_STOCK).length
 
   return (
     <div className="fr-report">
@@ -324,7 +340,7 @@ function StockReport() {
       <div className="fr-stock-summary">
         <div className="fr-ss-card">
           <span className="fr-ss-label">Total Products</span>
-          <span className="fr-ss-val">{STOCK_DATA.length}</span>
+          <span className="fr-ss-val">{stockItems.length}</span>
         </div>
         <div className="fr-ss-card">
           <span className="fr-ss-label">Total Stock Value</span>
@@ -349,11 +365,10 @@ function StockReport() {
           </tr>
         </thead>
         <tbody>
-          {STOCK_DATA.map((r, i) => (
+          {stockItems.map((r, i) => (
             <tr key={r.id} className={`fr-stock-row${i % 2 === 1 ? ' fr-stock-row--alt' : ''}`}>
               <td>
                 <div className="fr-stock-name">{r.name}</div>
-                <div className="fr-stock-id">{r.id}</div>
               </td>
               <td>{r.category}</td>
               <td className="align-right">
@@ -431,7 +446,6 @@ function BudgetReportTab() {
             <tr key={r.id} className={`fr-stock-row${i % 2 === 1 ? ' fr-stock-row--alt' : ''}`}>
               <td>
                 <div className="fr-stock-name">{r.name}</div>
-                <div className="fr-stock-id">{r.id}</div>
               </td>
               <td>{r.category}</td>
               <td className="align-right">{fmtINR(r.budgeted)}</td>

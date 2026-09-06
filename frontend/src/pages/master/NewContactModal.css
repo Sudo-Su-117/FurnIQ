@@ -247,7 +247,13 @@
 .ncm-type-btn--active { background: var(--primary); color: #fff; }
 
 /* Error message */
-.ncm-error-msg { display: block; font-size: 11px; color: var(--error); margin-top: 3px; }
+.ncm-error-msg {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--error);
+  margin-top: 4px;
+}
 
 /* ---- Footer buttons ---- */
 .ncm-footer {

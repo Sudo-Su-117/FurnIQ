@@ -115,22 +115,21 @@
   background: var(--bg-cream); padding: 1px 6px; border-radius: 3px;
 }
 .njm-acct-dropdown {
-  position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 400;
-  background: var(--card-bg); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
-  max-height: 200px; overflow-y: auto;
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1050;
+  background: #FFFFFF; border: 1.5px solid #C49A45;
+  border-radius: 10px; box-shadow: 0 12px 30px rgba(44,36,22,0.22), 0 3px 8px rgba(0,0,0,0.08);
+  max-height: 220px; overflow-y: auto;
+  padding: 6px;
 }
 .njm-acct-option {
   display: flex; align-items: center; gap: 8px;
-  width: 100%; text-align: left; padding: 8px 12px;
-  font-size: 13px; color: var(--text-medium);
-  background: none; border: none; cursor: pointer;
+  width: 100%; text-align: left; padding: 8px 10px;
+  font-size: 13px; color: var(--text-dark);
+  background: none; border: none; border-radius: 6px; cursor: pointer;
   font-family: var(--font-body);
-  transition: background 0.12s, color 0.12s;
-  border-bottom: 1px solid rgba(212,196,160,0.2);
+  transition: all 0.12s ease;
 }
-.njm-acct-option:last-child { border-bottom: none; }
-.njm-acct-option:hover { background: rgba(166,124,61,0.07); color: var(--primary); }
+.njm-acct-option:hover { background: rgba(196,154,69,0.14); color: #614418; }
 .njm-acct-opt-code {
   font-size: 11px; font-weight: 600; color: var(--text-light);
   font-family: 'Courier New', monospace;

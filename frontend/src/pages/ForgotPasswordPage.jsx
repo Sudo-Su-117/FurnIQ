@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useToast } from '../context/ToastContext'
 import './SignUpPage.css'
 
 function ForgotPasswordPage() {
+  const toast = useToast()
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
@@ -17,8 +19,10 @@ function ForgotPasswordPage() {
     try {
       await new Promise(r => setTimeout(r, 800))
       setSent(true)
+      toast.success(`Password reset instructions sent to ${email.trim()}`, 'Email Sent')
     } catch {
       setError('Something went wrong. Please try again.')
+      toast.error('Something went wrong. Please try again.', 'Error')
     } finally {
       setLoading(false)
     }
